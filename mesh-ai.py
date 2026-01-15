@@ -13,17 +13,10 @@ import smtplib
 from email.mime.text import MIMEText
 import logging
 import traceback
-from flask import Flask, request, jsonify, redirect, url_for, stream_with_context, Response, send_file
+from flask import Flask, request, jsonify, redirect, url_for, stream_with_context, Response
 import sys
 import socket  # for socket error checking
 import re
-import io
-import zipfile
-import subprocess
-import platform
-import tempfile
-import shutil
-import errno
 from twilio.rest import Client  # for Twilio SMS support
 from unidecode import unidecode   # Added unidecode import for Ollama text normalization
 from google.protobuf.message import DecodeError
@@ -168,7 +161,7 @@ BANNER = (
 ██║ ╚═╝ ██║███████╗███████║██║  ██║            ██║  ██║██║
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝            ╚═╝  ╚═╝╚═╝
 
-MESH-AI BETA v0.6.0 (PRE-RELEASE 2) by: MR_TBOT (https://mr-tbot.com)
+MESH-AI BETA v0.6.0 (PRE-RELEASE 1) by: MR_TBOT (https://mr-tbot.com)
 https://mesh-ai.dev - (https://github.com/mr-tbot/mesh-ai/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -207,85 +200,6 @@ def safe_load_json(path, default_value):
     except Exception as e:
         print(f"⚠️ Could not load {path}: {e}")
     return default_value
-
-
-_BUSY_ERRNOS = {
-  errno.EACCES,
-  errno.EBUSY,
-  errno.EPERM,
-  16,   # POSIX EBUSY on some platforms
-  26,   # DOS sharing violation equivalents
-  32,   # Windows ERROR_SHARING_VIOLATION
-}
-
-
-def _replace_with_retries(src_path: str, dest_path: str, attempts: int = 10, base_delay: float = 0.15):
-  """Atomically replace dest_path with src_path, retrying if the destination is busy.
-
-  Windows can momentarily lock files (antivirus, indexing, other processes). We retry a
-  few times with incremental backoff before surfacing the original exception. As a last
-  resort we fall back to copying the file contents in-place (non-atomic but better than
-  failing outright).
-  """
-  last_exc: OSError | None = None
-  for attempt in range(attempts):
-    try:
-      os.replace(src_path, dest_path)
-      return
-    except OSError as exc:
-      last_exc = exc
-      err_no = getattr(exc, "errno", None)
-      if err_no not in _BUSY_ERRNOS:
-        break
-      time.sleep(base_delay * (attempt + 1))
-
-  if last_exc is not None:
-    err_no = getattr(last_exc, "errno", None)
-    if err_no in _BUSY_ERRNOS:
-      try:
-        with open(src_path, "rb") as src, open(dest_path, "wb") as dest:
-          shutil.copyfileobj(src, dest)
-        os.remove(src_path)
-        return
-      except Exception as fallback_exc:
-        last_exc = fallback_exc if isinstance(fallback_exc, OSError) else last_exc
-    raise last_exc
-
-  raise RuntimeError("_replace_with_retries reached an impossible state")
-
-
-def _atomic_write_json(path: str, obj: dict):
-  """Write JSON to `path` using a temporary file + atomic replace with retries."""
-  dir_name = os.path.dirname(path) or "."
-  prefix = os.path.basename(path) + "."
-  fd, tmp_path = tempfile.mkstemp(prefix=prefix, suffix=".tmp", dir=dir_name)
-  try:
-    with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
-      json.dump(obj, tmp_file, ensure_ascii=False, indent=2)
-    _replace_with_retries(tmp_path, path)
-  except Exception:
-    try:
-      os.remove(tmp_path)
-    except OSError:
-      pass
-    raise
-
-
-def _atomic_write_text(path: str, text: str):
-  """Write plain text to `path` atomically with retry-aware replacement."""
-  dir_name = os.path.dirname(path) or "."
-  prefix = os.path.basename(path) + "."
-  fd, tmp_path = tempfile.mkstemp(prefix=prefix, suffix=".tmp", dir=dir_name)
-  try:
-    with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
-      tmp_file.write(text)
-    _replace_with_retries(tmp_path, path)
-  except Exception:
-    try:
-      os.remove(tmp_path)
-    except OSError:
-      pass
-    raise
 
 config = safe_load_json(CONFIG_FILE, {})
 commands_config = safe_load_json(COMMANDS_CONFIG_FILE, {"commands": []})
@@ -334,7 +248,7 @@ HOME_ASSISTANT_SECURE_PIN = str(config.get("home_assistant_secure_pin", "1234"))
 HOME_ASSISTANT_ENABLED = bool(config.get("home_assistant_enabled", False))
 HOME_ASSISTANT_CHANNEL_INDEX = int(config.get("home_assistant_channel_index", -1))
 MAX_CHUNK_SIZE = config.get("chunk_size", 200)
-MAX_CHUNKS = int(config.get("max_ai_chunks", 5))
+MAX_CHUNKS = 5
 CHUNK_DELAY = config.get("chunk_delay", 10)
 MAX_RESPONSE_LENGTH = MAX_CHUNK_SIZE * MAX_CHUNKS
 LOCAL_LOCATION_STRING = config.get("local_location_string", "Unknown Location")
@@ -430,6 +344,8 @@ TEST_COMMAND = None  # /test remains unsuffixed by request
 HELP_COMMAND = f"/help-{AI_SUFFIX}"
 MOTD_COMMAND = f"/motd-{AI_SUFFIX}"
 
+
+NODES_COMMAND = f"/nodes-{AI_SUFFIX}"
 app = Flask(__name__)
 messages = []
 interface = None
@@ -478,60 +394,16 @@ def config_editor_save():
       return jsonify({"message": "config must be a JSON object"}), 400
     if not isinstance(cmds, dict):
       return jsonify({"message": "commands_config must be a JSON object"}), 400
-    _atomic_write_json(CONFIG_FILE, cfg)
-    _atomic_write_json(COMMANDS_CONFIG_FILE, cmds)
-    _atomic_write_text(MOTD_FILE, motd)
+    for path, obj in ((CONFIG_FILE, cfg), (COMMANDS_CONFIG_FILE, cmds)):
+      tmp = path + ".tmp"
+      with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+      os.replace(tmp, path)
+    tmpm = MOTD_FILE + ".tmp"
+    with open(tmpm, "w", encoding="utf-8") as f:
+      f.write(motd)
+    os.replace(tmpm, MOTD_FILE)
     return jsonify({"status": "ok"})
-  except Exception as e:
-    return jsonify({"message": str(e)}), 500
-
-# --- Config backup: return a ZIP of config and logs that matter ---
-@app.route("/config_editor/backup", methods=["GET"])
-def config_editor_backup():
-  try:
-    mem = io.BytesIO()
-    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-      # Add core config files if present
-      for p in (CONFIG_FILE, COMMANDS_CONFIG_FILE, MOTD_FILE):
-        if os.path.exists(p):
-          zf.write(p, arcname=f"config/{os.path.basename(p)}")
-      # Add last logs if present
-      if os.path.exists(LOG_FILE):
-        zf.write(LOG_FILE, arcname=f"logs/{os.path.basename(LOG_FILE)}")
-      if os.path.exists(SCRIPT_LOG_FILE):
-        zf.write(SCRIPT_LOG_FILE, arcname=f"logs/{os.path.basename(SCRIPT_LOG_FILE)}")
-      if os.path.exists(ARCHIVE_FILE):
-        zf.write(ARCHIVE_FILE, arcname=f"logs/{os.path.basename(ARCHIVE_FILE)}")
-    mem.seek(0)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    return send_file(mem, as_attachment=True, download_name=f"mesh-ai-backup-{ts}.zip", mimetype="application/zip")
-  except Exception as e:
-    return jsonify({"message": str(e)}), 500
-
-# --- Soft restart: signal reconnect and reload config ---
-@app.route("/restart", methods=["POST"])
-def restart_service():
-  try:
-    data = request.get_json(silent=True) or {}
-    mode = (data.get("mode") or "soft").lower()
-    if mode == "hard":
-      add_script_log("Hard restart requested via WebUI.")
-      # Spawn a fresh process and exit current one
-      python = sys.executable
-      args = [python, os.path.abspath(__file__)]
-      creationflags = 0
-      # On Windows, detach new console to avoid blocking
-      if platform.system() == 'Windows':
-        creationflags = getattr(subprocess, 'CREATE_NEW_CONSOLE', 0)
-      subprocess.Popen(args, close_fds=True, creationflags=creationflags)
-      # Delay exit slightly to allow HTTP response to flush
-      threading.Timer(0.5, lambda: os._exit(0)).start()
-      return jsonify({"status": "hard-restarting"})
-    else:
-      # Soft restart: signal interface loop to reconnect
-      reset_event.set()
-      add_script_log("Soft restart requested via WebUI.")
-      return jsonify({"status": "soft-restarting"})
   except Exception as e:
     return jsonify({"message": str(e)}), 500
 
@@ -1019,6 +891,35 @@ def handle_command(cmd, full_text, sender_id):
       return f"🤖 Sorry {sn}, I have no GPS fix for your node."
     tstr = str(tstamp) if tstamp else "Unknown"
     return f"Node {sn} GPS: {lat}, {lon} (time: {tstr})"
+
+  elif cmd == NODES_COMMAND:
+    # Count "online" nodes (heard recently) as seen by this node (local view).
+    # Practical definition: lastHeard <= 2 hours.
+    import time
+
+    if interface is None or not hasattr(interface, "nodes") or interface.nodes is None:
+      return "🤖 Interface non disponible (pas de données nœuds)."
+
+    now = time.time()
+    ONLINE_WINDOW_SEC = 2 * 60 * 60  # 2 hours
+
+    nodes = list(interface.nodes.values())
+
+    def _norm_lastheard(v):
+      # Some fields may be in ms; normalize to seconds.
+      try:
+        v = float(v)
+        return v / 1000.0 if v > 1e12 else v
+      except Exception:
+        return None
+
+    online = 0
+    for n in nodes:
+      lh = _norm_lastheard(n.get("lastHeard") or n.get("last_heard"))
+      if lh and (now - lh) <= ONLINE_WINDOW_SEC:
+        online += 1
+
+    return f"Online(2h): {online} | Total connus: {len(nodes)}"
   elif cmd in ["/emergency", "/911"]:
     lat, lon, tstamp = get_node_location(sender_id)
     user_msg = full_text[len(cmd):].strip()
@@ -1035,6 +936,8 @@ def handle_command(cmd, full_text, sender_id):
     built_in = [
       ABOUT_COMMAND,
       WHEREAMI_COMMAND,
+    NODES_COMMAND,
+      NODES_COMMAND,
       "/emergency",
       "/911",
       "/ping",
@@ -1088,6 +991,7 @@ def get_available_commands_list():
   # Built-ins
   desc[ABOUT_COMMAND] = "About this bot"
   desc[WHEREAMI_COMMAND] = "Show your node's GPS coordinates (if available)"
+  desc[NODES_COMMAND] = "Count online nodes (heard <= 2h) + total known"
   desc[MOTD_COMMAND] = "Show the Message of the Day"
   desc[HELP_COMMAND] = "List available commands"
   desc["/emergency"] = "Send an emergency alert (Twilio/Email/Discord if enabled)"
@@ -1478,6 +1382,9 @@ def dashboard():
     @keyframes tickerScroll { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
     #sendForm { margin: 20px; padding: 20px; background: #111; border: 2px solid var(--theme-color); border-radius: 10px; position: relative; }
     .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .panel-actions a { background: var(--theme-color); color: #000; padding: 8px 12px; margin-left: 6px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 0.95em; border: 1px solid var(--theme-color); }
+  .panel-actions button { background: #222; color: var(--theme-color); padding: 8px 12px; margin-left: 6px; border:1px solid var(--theme-color); border-radius: 4px; font-weight: bold; cursor:pointer; font-size: 0.95em; }
+    .panel-actions button:hover, .panel-actions a:hover { filter: brightness(0.9); }
     .three-col { display: flex; flex-wrap: wrap; gap: 20px; margin: 20px; }
     .three-col .col { flex: 1 1 100%; }
     @media (min-width: 992px) {
@@ -1570,19 +1477,11 @@ def dashboard():
     .commands-table td { padding:8px 10px; border-bottom:1px solid #333; }
     .commands-table code { color:#0ff; }
   /* Masthead logo above Send a Message */
-  .masthead { display:flex; flex-wrap:wrap; align-items:center; justify-content: space-between; gap: 16px; margin: 20px 20px 0 20px; }
-  .masthead .logo-wrap { position: relative; display: inline-block; flex: 0 0 auto; }
+  .masthead { display:flex; justify-content:flex-start; align-items:center; margin: 20px 20px 0 20px; }
+  .masthead .logo-wrap { position: relative; display: inline-block; }
   .masthead img { width: clamp(140px, 20vw, 260px); height:auto; display:block; }
   /* Theme color tint overlay for logo (masked to logo shape) */
   .masthead .logo-overlay { position: absolute; inset: 0; background: var(--theme-color); opacity: 0.35; pointer-events: none; }
-  .masthead-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap: 10px; margin-left: auto; }
-  .masthead-actions button { background: #222; color: var(--theme-color); padding: 8px 12px; border:1px solid var(--theme-color); border-radius: 4px; font-weight: bold; cursor:pointer; font-size: 0.95em; }
-  .masthead-actions a { background: var(--theme-color); color: #000; padding: 8px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 0.95em; border: 1px solid var(--theme-color); }
-  .masthead-actions button:hover, .masthead-actions a:hover { filter: brightness(0.9); }
-  @media (max-width: 768px) {
-    .masthead { flex-direction: column; align-items: flex-start; }
-    .masthead-actions { width: 100%; justify-content: flex-start; }
-  }
   /* Content flows naturally; no offset needed */
   #appRoot { padding-top: 0; }
   </style>
@@ -1796,7 +1695,6 @@ def dashboard():
       const newPos = start + insert.length;
       ta.selectionStart = ta.selectionEnd = newPos;
       ta.focus();
-      updateCharCounter();
     }
     let lastMessageTimestamp = null;
     let tickerTimeout = null;
@@ -2001,9 +1899,6 @@ def dashboard():
       let tzSel = document.getElementById('timezoneSelect');
       let tz = getTimezoneOffset();
       tzSel.value = tz;
-
-      // --- Init char/chunk counter ---
-      initCharChunkCounter();
     });
 
     // --- UI Settings Functions ---
@@ -2077,7 +1972,6 @@ def dashboard():
         ch.value = target;
         document.getElementById('messageBox').value = '';
       }
-      updateCharCounter();
     }
 
     function dmToNode(nodeId, shortName, replyToTs) {
@@ -2091,7 +1985,6 @@ def dashboard():
       } else {
         document.getElementById('messageBox').value = '@' + shortName + ': ';
       }
-      updateCharCounter();
     }
 
     function replyToLastDM() {
@@ -2109,7 +2002,6 @@ def dashboard():
         toggleMode('broadcast');
         document.getElementById('channelSel').value = lastChannelTarget;
         document.getElementById('messageBox').value = '';
-        updateCharCounter();
       } else {
         alert("No broadcast channel target available.");
       }
@@ -2715,7 +2607,6 @@ def dashboard():
           bar.appendChild(b);
         });
       }
-      initCharChunkCounter();
     }
   window.addEventListener("load", () => { onPageLoad(); pollStatus(); });
 
@@ -2746,51 +2637,6 @@ def dashboard():
       });
     }
   </script>
-  <script>
-    // Char/Chunk counter for Send a Message
-    const MAX_CHUNK_SIZE_JS = """ + str(MAX_CHUNK_SIZE) + """;
-    const MAX_CHUNKS_JS = """ + str(MAX_CHUNKS) + """;
-    function updateCharCounter() {
-      const ta = document.getElementById('messageBox');
-      if (!ta) return;
-      const text = ta.value || '';
-      const chars = text.length;
-      const chunks = Math.min(MAX_CHUNKS_JS, Math.ceil(chars / MAX_CHUNK_SIZE_JS) || 0);
-      const maxChars = MAX_CHUNK_SIZE_JS * MAX_CHUNKS_JS;
-      const cc = document.getElementById('charCounter');
-      if (cc) {
-        cc.textContent = `Characters: ${chars}/${maxChars}, Chunks: ${chunks}/${MAX_CHUNKS_JS}`;
-      }
-    }
-    function initCharChunkCounter() {
-      const ta = document.getElementById('messageBox');
-      if (!ta) return;
-      if (!ta.dataset.counterBound) {
-        ['input','change','keyup','paste'].forEach(evt => ta.addEventListener(evt, updateCharCounter));
-        ta.dataset.counterBound = 'true';
-      }
-      updateCharCounter();
-    }
-
-    // Config backup and restart helpers
-    function downloadConfigBackup() {
-      // Navigate to endpoint to trigger browser download
-      window.open('/config_editor/backup', '_blank');
-    }
-    async function restartMeshAI() {
-      if (!confirm('Restart MESH-AI now?')) return;
-      // Ask for type of restart
-      const hard = confirm('Click OK for a full (hard) restart or Cancel for a quick (soft) restart.');
-      try {
-        const r = await fetch('/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: hard ? 'hard' : 'soft' }) });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(j.message || 'Failed');
-        alert('Restart requested (' + (hard ? 'hard' : 'soft') + '). The connection may drop briefly.');
-      } catch (e) {
-        alert('Restart failed: ' + e.message);
-      }
-    }
-  </script>
 </head>
 <body>
   <div id="appRoot">
@@ -2808,20 +2654,20 @@ def dashboard():
       <img id="mastheadLogo" src="https://mr-tbot.com/wp-content/uploads/2025/09/MESH-AI.png" alt="MESH-AI Logo" loading="lazy">
       <span class="logo-overlay"></span>
     </span>
-    <div class="masthead-actions">
-      <span class="suffix-chip" title="Current AI alias and suffix">""" + f"{AI_ALIAS_CANONICAL} (suffix: {AI_SUFFIX})" + """</span>
-      <button type="button" onclick="openCommandsModal()">Commands</button>
-      <button type="button" onclick="openConfigModal()">Config</button>
-      <a href="/logs" target="_blank">Logs</a>
-    </div>
   </div>
 
   <div class="lcars-panel" id="sendForm">
     <div class="panel-header">
       <h2>Send a Message</h2>
+      <div class="panel-actions">
+  <span class="suffix-chip" title="Current AI alias and suffix">""" + f"{AI_ALIAS_CANONICAL} (suffix: {AI_SUFFIX})" + """</span>
+  <button type="button" onclick="openCommandsModal()">Commands</button>
+  <button type="button" onclick="openConfigModal()">Config</button>
+  <a href="/logs" target="_blank">Logs</a>
+      </div>
     </div>
     <form method="POST" action="/ui_send">
-  <label>Message Mode:</label>
+      <label>Message Mode:</label>
       <label class="switch">
         <input type="checkbox" id="modeSwitch">
         <span class="slider round"></span>
@@ -2847,7 +2693,7 @@ def dashboard():
       <label>Message:</label><br>
       <textarea id="messageBox" name="message" rows="3" style="width:80%;"></textarea>
   <div id="quickEmojiBar" style="margin:6px 0; display:flex; flex-wrap:wrap; gap:6px;"></div>
-  <div id="charCounter">Characters: 0/""" + str(MAX_RESPONSE_LENGTH) + """, Chunks: 0/""" + str(MAX_CHUNKS) + """</div><br>
+      <div id="charCounter">Characters: 0/1000, Chunks: 0/5</div><br>
   <button type="submit" class="reply-btn">Send</button>
   <button type="button" class="reply-btn" onclick="replyToLastDM()">Reply to Last DM</button>
   <button type="button" class="reply-btn" onclick="replyToLastChannel()">Reply to Last Channel</button>
@@ -2910,7 +2756,7 @@ def dashboard():
     <h2>Discord Messages</h2>
     <div id="discordMessagesDiv"></div>
   </div>
-  <div class="footer-right-link"><a class="btnlink" href="https://mesh-ai.dev" target="_blank">MESH-AI v0.6.0 PR2\nby: MR-TBOT</a></div>
+  <div class="footer-right-link"><a class="btnlink" href="https://mesh-ai.dev" target="_blank">MESH-AI v0.6.0 PR1\nby: MR-TBOT</a></div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
     <div class="modal-content">
@@ -2937,11 +2783,6 @@ def dashboard():
         <div style="margin-bottom:8px;">
           <button class="reply-btn" onclick="loadConfigFiles()">Reload from Disk</button>
           <button class="mark-read-btn" onclick="saveConfigFiles()">Save All</button>
-          <button class="reply-btn" onclick="downloadConfigBackup()">Download Backup</button>
-          <button class="mark-read-btn" onclick="restartMeshAI()" title="Applies settings that require restart">Restart Service</button>
-        </div>
-        <div style="background:#1a1a1a; border:1px solid var(--theme-color); padding:10px; border-radius:8px; margin-bottom:10px; color:#ccc;">
-          <strong>Note:</strong> Changes to providers, connectivity (Wi‑Fi/Serial/Mesh), or Discord/Twilio credentials usually require a restart. Use the <em>Restart</em> button above after saving.
         </div>
         <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
           <button class="reply-btn" onclick="showConfigTab('cfg')">config.json</button>
@@ -2950,24 +2791,6 @@ def dashboard():
         </div>
         <div id="cfgTab" style="display:block;">
           <textarea id="cfgEditor" style="width:100%; height:40vh; background:#000; color:#0f0; border:1px solid var(--theme-color);"></textarea>
-          <div style="margin-top:8px; color:#bbb; font-size:0.95em; line-height:1.4;">
-            <details open>
-              <summary style="color:#ffa500; cursor:pointer;">config.json options help</summary>
-              <ul>
-                <li><code>ai_provider</code>: lmstudio | openai | ollama — selects the AI backend.</li>
-                <li><code>system_prompt</code>: System role text sent to the AI.</li>
-                <li><code>lmstudio_url</code>, <code>lmstudio_chat_model</code>, <code>lmstudio_timeout</code>: LM Studio settings.</li>
-                <li><code>openai_api_key</code>, <code>openai_model</code>, <code>openai_timeout</code>: OpenAI settings.</li>
-                <li><code>ollama_url</code>, <code>ollama_model</code>, <code>ollama_timeout</code>, <code>ollama_keep_alive</code>, <code>ollama_options</code>: Ollama settings.</li>
-                <li><code>reply_in_channels</code>, <code>reply_in_directs</code>, <code>ai_respond_on_longfast</code>: Reply policy.</li>
-                <li><code>chunk_size</code> and <code>max_ai_chunks</code>: Max characters per chunk and number of chunks sent.</li>
-                <li><code>use_wifi</code>, <code>wifi_host</code>/<code>wifi_port</code>; <code>serial_port</code>/<code>serial_baud</code>; <code>use_mesh_interface</code>: Connectivity modes.</li>
-                <li><code>home_assistant_*</code>: Enable and secure Home Assistant routing on a dedicated channel.</li>
-                <li><code>enable_discord</code>, <code>discord_webhook_url</code>, <code>discord_*</code>: Send/receive via Discord.</li>
-                <li><code>enable_twilio</code> and <code>enable_smtp</code>: Emergency SMS/Email alerts.</li>
-              </ul>
-            </details>
-          </div>
         </div>
         <div id="cmdTab" style="display:none;">
           <textarea id="cmdEditor" style="width:100%; height:40vh; background:#000; color:#0ff; border:1px solid var(--theme-color);"></textarea>
@@ -3085,13 +2908,7 @@ def send_message():
         return jsonify({"status": "error", "message": "No JSON payload"}), 400
     message = data.get("message")
     node_id = data.get("node_id")
-    # Accept both legacy "channel_index" and newer "channel" keys
-    if "channel_index" in data:
-        channel_idx = data.get("channel_index")
-    else:
-        channel_idx = data.get("channel")
-    if channel_idx is None:
-        channel_idx = 0
+    channel_idx = data.get("channel_index", 0)
     direct = data.get("direct", False)
     # Validate inputs: allow either Direct (requires node_id) or Broadcast (requires channel_index)
     if not message:
@@ -3108,7 +2925,7 @@ def send_message():
             # channel_idx may come as string; ensure int and default to 0 if invalid
             try:
                 channel_idx = int(channel_idx)
-            except (TypeError, ValueError):
+            except Exception:
                 channel_idx = 0
             log_message("WebUI", f"{message} [to: Broadcast Channel {channel_idx}]", direct=False, channel_idx=channel_idx)
             info_print(f"[Info] Broadcast on ch={channel_idx} => '{message}'")
