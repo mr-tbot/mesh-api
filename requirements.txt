@@ -1,8 +1,8 @@
-protobuf==6.32.1
-tornado==6.5.2
-meshtastic==2.7.3
+protobuf==6.33.5
+tornado==6.5.4
+meshtastic==2.7.7
 pubsub==0.1.2
 requests==2.32.5
 Flask==3.1.2
-twilio==9.8.2
+twilio==9.10.1
 unidecode==1.4.0

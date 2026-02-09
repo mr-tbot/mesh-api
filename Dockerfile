@@ -38,10 +38,10 @@ RUN pip install --no-cache-dir --upgrade \
 # Application
 # ------------------------------------------------------------
 WORKDIR /app
-COPY mesh_ai.py .
+COPY mesh-api.py .
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 5000
-CMD ["python", "mesh_ai.py"]
+CMD ["python", "mesh-api.py"]

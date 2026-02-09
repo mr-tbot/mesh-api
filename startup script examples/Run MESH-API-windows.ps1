@@ -1,4 +1,4 @@
-# RUN-MESH-AI.ps1
+# RUN-MESH-API.ps1
 param(
     [string[]]$ScriptArgs
 )
@@ -13,10 +13,10 @@ if (Test-Path $venv) {
 }
 
 # --- Decide which script to run ---
-$scriptFile = @("mesh_ai.py", "mesh-ai.py") | Where-Object { Test-Path $_ } | Select-Object -First 1
+$scriptFile = @("mesh-api.py") | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 if ($null -eq $scriptFile) {
-    Write-Host "[ERROR] Could not find mesh_ai.py or mesh-ai.py in $PWD" -ForegroundColor Red
+    Write-Host "[ERROR] Could not find mesh-api.py in $PWD" -ForegroundColor Red
     Write-Host "Available Python files:" -ForegroundColor Yellow
     Get-ChildItem -Filter *.py | ForEach-Object { $_.Name }
     exit 1

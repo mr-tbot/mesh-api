@@ -161,14 +161,15 @@ log.disabled = True
 BANNER = (
     "\033[38;5;214m"
     """
-███╗   ███╗███████╗███████╗██╗  ██╗             █████╗ ██╗
-████╗ ████║██╔════╝██╔════╝██║  ██║            ██╔══██╗██║
-██╔████╔██║█████╗  ███████╗███████║  █████╗    ███████║██║
-██║╚██╔╝██║██╔══╝  ╚════██║██╔══██║  ╚════╝    ██╔══██║██║
-██║ ╚═╝ ██║███████╗███████║██║  ██║            ██║  ██║██║
-╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝            ╚═╝  ╚═╝╚═╝
+███╗   ███╗███████╗███████╗██╗  ██╗       █████╗ ██████╗ ██╗
+████╗ ████║██╔════╝██╔════╝██║  ██║      ██╔══██╗██╔══██╗██║
+██╔████╔██║█████╗  ███████╗███████║█████╗███████║██████╔╝██║
+██║╚██╔╝██║██╔══╝  ╚════██║██╔══██║╚════╝██╔══██║██╔═══╝ ██║
+██║ ╚═╝ ██║███████╗███████║██║  ██║      ██║  ██║██║     ██║
+╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
+                                                            
 
-MESH-API BETA v0.6.0 (PRE-RELEASE 3) by: MR_TBOT (https://mr-tbot.com)
+MESH-API BETA v0.6.0 (PRE-RELEASE 4) by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -326,13 +327,6 @@ OLLAMA_TIMEOUT = config.get("ollama_timeout", 60)
 # Optional advanced Ollama settings to improve stability/quality
 OLLAMA_OPTIONS = config.get("ollama_options", {})  # e.g., {"temperature": 0.7}
 OLLAMA_KEEP_ALIVE = config.get("ollama_keep_alive", "10m")  # keep model loaded
-try:
-  OLLAMA_MAX_PARALLEL = int(config.get("ollama_max_parallel", 1))
-except (TypeError, ValueError):
-  OLLAMA_MAX_PARALLEL = 1
-if OLLAMA_MAX_PARALLEL < 1:
-  OLLAMA_MAX_PARALLEL = 1
-OLLAMA_SEMAPHORE = threading.BoundedSemaphore(OLLAMA_MAX_PARALLEL)
 HOME_ASSISTANT_URL = config.get("home_assistant_url", "")
 HOME_ASSISTANT_TOKEN = config.get("home_assistant_token", "")
 HOME_ASSISTANT_TIMEOUT = config.get("home_assistant_timeout", 30)
@@ -387,13 +381,10 @@ USE_MESH_INTERFACE = bool(config.get("use_mesh_interface", False))
 # - respond_to_mqtt_messages: if False (default), the bot will ignore messages received via MQTT
 AI_RESPOND_ON_LONGFAST = bool(config.get("ai_respond_on_longfast", False))
 RESPOND_TO_MQTT_MESSAGES = bool(config.get("respond_to_mqtt_messages", False))
-NODES_ONLINE_WINDOW_SEC = int(config.get("nodes_online_window_sec", 2 * 60 * 60))
 
 # Randomized, per-install AI command alias. Generated on first run to reduce collisions
 def _ensure_ai_command_alias():
   alias = config.get("ai_command")
-  if isinstance(alias, str):
-    alias = alias.strip()
   # Enforce a randomized alias; do not allow bare "/ai" as a default
   if isinstance(alias, str) and alias.startswith("/") and len(alias) <= 12:
     # Disallow bare "/ai" and "/ai-"
@@ -416,11 +407,11 @@ AI_COMMAND_ALIAS = _ensure_ai_command_alias()
 
 # Derive unique suffix from the alias
 # Support both old style ("/ai9z") and new dashed style ("/ai-9z") for parsing
-_m = re.match(r"^(?:/ai-([a-z0-9]+)|/ai([a-z0-9]+))$", (AI_COMMAND_ALIAS or "").strip(), re.IGNORECASE)
-AI_SUFFIX = ((_m.group(1) or _m.group(2)) if _m else "").lower()
+_m = re.match(r"^(?:/ai-([a-z0-9]+)|/ai([a-z0-9]+))$", AI_COMMAND_ALIAS or "", re.IGNORECASE)
+AI_SUFFIX = (_m.group(1) or _m.group(2)) if _m else ""
 
 # Canonical, dashed AI alias for display (always shows as /ai-xx)
-AI_ALIAS_CANONICAL = f"/ai-{AI_SUFFIX}" if AI_SUFFIX else (AI_COMMAND_ALIAS or "").strip()
+AI_ALIAS_CANONICAL = f"/ai-{AI_SUFFIX}" if AI_SUFFIX else AI_COMMAND_ALIAS
 
 # Only dashed suffixed commands are allowed (no bare defaults)
 AI_COMMANDS = [
@@ -429,16 +420,6 @@ AI_COMMANDS = [
   f"/query-{AI_SUFFIX}",
   f"/data-{AI_SUFFIX}",
 ]
-AI_COMMANDS_SET = {c.lower() for c in AI_COMMANDS if c}
-if AI_SUFFIX:
-  AI_COMMANDS_SET.update({
-    f"/ai{AI_SUFFIX}",
-    f"/bot{AI_SUFFIX}",
-    f"/query{AI_SUFFIX}",
-    f"/data{AI_SUFFIX}",
-  })
-AI_COMMANDS_SET.add((AI_ALIAS_CANONICAL or "").strip().lower())
-AI_COMMANDS_SET.add((AI_COMMAND_ALIAS or "").strip().lower())
 
 # SMS also requires the unique dashed suffix
 SMS_COMMAND = f"/sms-{AI_SUFFIX}"
@@ -449,7 +430,6 @@ WHEREAMI_COMMAND = f"/whereami-{AI_SUFFIX}"
 TEST_COMMAND = None  # /test remains unsuffixed by request
 HELP_COMMAND = f"/help-{AI_SUFFIX}"
 MOTD_COMMAND = f"/motd-{AI_SUFFIX}"
-NODES_COMMAND = f"/nodes-{AI_SUFFIX}"
 
 app = Flask(__name__)
 messages = []
@@ -831,9 +811,6 @@ def send_to_openai(user_message):
 def send_to_ollama(user_message):
     dprint(f"send_to_ollama: user_message='{user_message}'")
     info_print("[Info] Routing user message to Ollama...")
-    if not OLLAMA_SEMAPHORE.acquire(blocking=False):
-        print("⚠️ Ollama busy: too many concurrent requests. Throttling.")
-        return "🤖 [Ollama busy. Try again soon.]"
     # Normalize text for non-ASCII characters using unidecode
     user_message = unidecode(user_message)
     combined_prompt = f"{SYSTEM_PROMPT}\n{user_message}"
@@ -857,24 +834,21 @@ def send_to_ollama(user_message):
         except Exception:
             return text or ""
 
-    try:
-        for attempt in range(2):  # up to 2 attempts
-            try:
-                r = requests.post(OLLAMA_URL, json=payload, timeout=OLLAMA_TIMEOUT)
-                if r.status_code == 200:
-                    jr = r.json()
-                    dprint(f"Ollama raw => {jr}")
-                    resp = jr.get("response", "")
-                    clean = sanitize_model_output(_sanitize(resp))
-                    return (clean if clean else "🤖 [No response]")[:MAX_RESPONSE_LENGTH]
-                else:
-                    print(f"⚠️ Ollama error: {r.status_code} => {r.text}")
-            except Exception as e:
-                print(f"⚠️ Ollama request failed (attempt {attempt+1}): {e}")
-            time.sleep(0.5 * (attempt + 1))
-        return None
-    finally:
-        OLLAMA_SEMAPHORE.release()
+    for attempt in range(2):  # up to 2 attempts
+        try:
+            r = requests.post(OLLAMA_URL, json=payload, timeout=OLLAMA_TIMEOUT)
+            if r.status_code == 200:
+                jr = r.json()
+                dprint(f"Ollama raw => {jr}")
+                resp = jr.get("response", "")
+                clean = sanitize_model_output(_sanitize(resp))
+                return (clean if clean else "🤖 [No response]")[:MAX_RESPONSE_LENGTH]
+            else:
+                print(f"⚠️ Ollama error: {r.status_code} => {r.text}")
+        except Exception as e:
+            print(f"⚠️ Ollama request failed (attempt {attempt+1}): {e}")
+        time.sleep(0.5 * (attempt + 1))
+    return None
 
 def send_to_home_assistant(user_message):
     dprint(f"send_to_home_assistant: user_message='{user_message}'")
@@ -1023,23 +997,15 @@ def route_message_text(user_message, channel_idx):
         resp = get_ai_response(user_message)
         return resp if resp else "🤖 [No AI response]"
 
-def normalize_command(cmd: str) -> str:
-  """Normalize a command token for matching."""
-  if not cmd:
-    return ""
-  cmd = cmd.strip().lower()
-  cmd = re.sub(r"[\.,:;!?]+$", "", cmd)
-  return cmd
-
 # -----------------------------
 # Revised Command Handler (Case-Insensitive)
 # -----------------------------
 def handle_command(cmd, full_text, sender_id):
-  cmd = normalize_command(cmd)
+  cmd = cmd.lower()
   dprint(f"handle_command => cmd='{cmd}', full_text='{full_text}', sender_id={sender_id}")
   if cmd == ABOUT_COMMAND:
     return "MESH-API Off Grid Chat Bot - By: MR-TBOT.com"
-  elif cmd in AI_COMMANDS_SET:
+  elif cmd in AI_COMMANDS:
     user_prompt = full_text[len(cmd):].strip()
     if AI_PROVIDER == "home_assistant" and HOME_ASSISTANT_ENABLE_PIN:
       if not pin_is_valid(user_prompt):
@@ -1054,27 +1020,6 @@ def handle_command(cmd, full_text, sender_id):
       return f"🤖 Sorry {sn}, I have no GPS fix for your node."
     tstr = str(tstamp) if tstamp else "Unknown"
     return f"Node {sn} GPS: {lat}, {lon} (time: {tstr})"
-  elif cmd == NODES_COMMAND:
-    if interface is None or not hasattr(interface, "nodes") or interface.nodes is None:
-      return "🤖 Interface unavailable (no node data)."
-    now = time.time()
-    online_window_sec = NODES_ONLINE_WINDOW_SEC
-    nodes = list(interface.nodes.values())
-
-    def _norm_lastheard(value):
-      try:
-        last_heard = float(value)
-      except Exception:
-        return None
-      return last_heard / 1000.0 if last_heard > 1e12 else last_heard
-
-    online = 0
-    for node in nodes:
-      last_heard = _norm_lastheard(node.get("lastHeard") or node.get("last_heard"))
-      if last_heard and (now - last_heard) <= online_window_sec:
-        online += 1
-
-    return f"Online(2h): {online} | Total known: {len(nodes)}"
   elif cmd in ["/emergency", "/911"]:
     lat, lon, tstamp = get_node_location(sender_id)
     user_msg = full_text[len(cmd):].strip()
@@ -1091,7 +1036,6 @@ def handle_command(cmd, full_text, sender_id):
     built_in = [
       ABOUT_COMMAND,
       WHEREAMI_COMMAND,
-      NODES_COMMAND,
       "/emergency",
       "/911",
       "/ping",
@@ -1145,7 +1089,6 @@ def get_available_commands_list():
   # Built-ins
   desc[ABOUT_COMMAND] = "About this bot"
   desc[WHEREAMI_COMMAND] = "Show your node's GPS coordinates (if available)"
-  desc[NODES_COMMAND] = "Count online nodes (heard <= 2h) + total known"
   desc[MOTD_COMMAND] = "Show the Message of the Day"
   desc[HELP_COMMAND] = "List available commands"
   desc["/emergency"] = "Send an emergency alert (Twilio/Email/Discord if enabled)"
@@ -1175,7 +1118,6 @@ def get_available_commands_list():
   built_in = [
     ABOUT_COMMAND,
     WHEREAMI_COMMAND,
-    NODES_COMMAND,
     "/emergency",
     "/911",
     "/ping",
@@ -2864,7 +2806,7 @@ def dashboard():
 
   <div class="masthead">
     <span class="logo-wrap">
-      <img id="mastheadLogo" src="https://mr-tbot.com/wp-content/uploads/2025/09/MESH-API.png" alt="MESH-API Logo" loading="lazy">
+      <img id="mastheadLogo" src="https://mr-tbot.com/wp-content/uploads/2026/02/MESH-API.png" alt="MESH-API Logo" loading="lazy">
       <span class="logo-overlay"></span>
     </span>
     <div class="masthead-actions">
@@ -2969,7 +2911,7 @@ def dashboard():
     <h2>Discord Messages</h2>
     <div id="discordMessagesDiv"></div>
   </div>
-  <div class="footer-right-link"><a class="btnlink" href="https://mesh-api.dev" target="_blank">MESH-API v0.6.0 PR3\nby: MR-TBOT</a></div>
+  <div class="footer-right-link"><a class="btnlink" href="https://mesh-api.dev" target="_blank">MESH-API v0.6.0 PR4\nby: MR-TBOT</a></div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
     <div class="modal-content">
@@ -3012,51 +2954,18 @@ def dashboard():
           <div style="margin-top:8px; color:#bbb; font-size:0.95em; line-height:1.4;">
             <details open>
               <summary style="color:#ffa500; cursor:pointer;">config.json options help</summary>
-              <div style="margin:8px 0 4px; color:#ddd;"><strong>Core</strong></div>
               <ul>
                 <li><code>ai_provider</code>: lmstudio | openai | ollama — selects the AI backend.</li>
                 <li><code>system_prompt</code>: System role text sent to the AI.</li>
-                <li><code>ai_command</code>: Sets your unique AI command alias (suffix).</li>
-                <li><code>ai_node_name</code>: Display name for the AI node.</li>
-                <li><code>local_location_string</code>: Text for <code>/test</code> responses.</li>
-              </ul>
-              <div style="margin:8px 0 4px; color:#ddd;"><strong>Diagnostics</strong></div>
-              <ul>
-                <li><code>debug</code>: Enable verbose logging and extra diagnostics.</li>
-                <li><code>max_message_log</code>: Limit stored messages (0 = unlimited).</li>
-              </ul>
-              <div style="margin:8px 0 4px; color:#ddd;"><strong>Providers</strong></div>
-              <ul>
                 <li><code>lmstudio_url</code>, <code>lmstudio_chat_model</code>, <code>lmstudio_timeout</code>: LM Studio settings.</li>
                 <li><code>openai_api_key</code>, <code>openai_model</code>, <code>openai_timeout</code>: OpenAI settings.</li>
-                <li><code>ollama_url</code>, <code>ollama_model</code>, <code>ollama_timeout</code>, <code>ollama_keep_alive</code>, <code>ollama_options</code>, <code>ollama_max_parallel</code>: Ollama settings.</li>
-              </ul>
-              <div style="margin:8px 0 4px; color:#ddd;"><strong>Connectivity</strong></div>
-              <ul>
-                <li><code>use_wifi</code>, <code>wifi_host</code>/<code>wifi_port</code>; <code>serial_port</code>/<code>serial_baud</code>; <code>use_mesh_interface</code>: Connectivity modes.</li>
-                <li><code>force_node_num</code>: Override local node number (advanced).</li>
-              </ul>
-              <div style="margin:8px 0 4px; color:#ddd;"><strong>Policy</strong></div>
-              <ul>
+                <li><code>ollama_url</code>, <code>ollama_model</code>, <code>ollama_timeout</code>, <code>ollama_keep_alive</code>, <code>ollama_options</code>: Ollama settings.</li>
                 <li><code>reply_in_channels</code>, <code>reply_in_directs</code>, <code>ai_respond_on_longfast</code>: Reply policy.</li>
-                <li><code>respond_to_mqtt_messages</code>: Allow replies to MQTT-originated messages.</li>
-              </ul>
-              <div style="margin:8px 0 4px; color:#ddd;"><strong>Performance</strong></div>
-              <ul>
                 <li><code>chunk_size</code> and <code>max_ai_chunks</code>: Max characters per chunk and number of chunks sent.</li>
-                <li><code>chunk_delay</code>: Delay between chunk sends.</li>
-              </ul>
-              <div style="margin:8px 0 4px; color:#ddd;"><strong>Channels</strong></div>
-              <ul>
-                <li><code>channel_names</code>: Friendly names for channel indexes.</li>
-                <li><code>nodes_online_window_sec</code>: Online window for <code>/nodes-XY</code>.</li>
-              </ul>
-              <div style="margin:8px 0 4px; color:#ddd;"><strong>Integrations</strong></div>
-              <ul>
+                <li><code>use_wifi</code>, <code>wifi_host</code>/<code>wifi_port</code>; <code>serial_port</code>/<code>serial_baud</code>; <code>use_mesh_interface</code>: Connectivity modes.</li>
                 <li><code>home_assistant_*</code>: Enable and secure Home Assistant routing on a dedicated channel.</li>
                 <li><code>enable_discord</code>, <code>discord_webhook_url</code>, <code>discord_*</code>: Send/receive via Discord.</li>
-                <li><code>enable_twilio</code>, <code>twilio_*</code>: Emergency SMS alerts and inbound routing.</li>
-                <li><code>enable_smtp</code>, <code>smtp_*</code>, <code>alert_email_to</code>: Emergency email alerts.</li>
+                <li><code>enable_twilio</code> and <code>enable_smtp</code>: Emergency SMS/Email alerts.</li>
               </ul>
             </details>
           </div>

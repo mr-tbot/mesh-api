@@ -1,37 +1,37 @@
-# MESH-AI (BETA v0.6.0 - PRE-RELEASE 2) 
+# MESH-API (BETA v0.6.0 - PRE-RELEASE 3) 
 
 - some updated features and packages may introduce unforeseen bugs - PLEASE REPORT ANY ISSUES ASAP BEFORE FULL PACKAGE RELEASE AND DOCKER IMAGE UPDATES.
 
 - PLEASE NOTE - There are new requirements and new config options - v0.6.0 updates many required library versions - and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
 
-- Having issues getting up and running?  As of v0.6.0 I have created a custom GPT with Open-AI to assist anyone having problems - give it a try! - https://chatgpt.com/g/g-68d86345f4c4819183c417b3790499c7-mesh-ai-setup-assistant
+- Having issues getting up and running?  As of v0.6.0 I have created a custom GPT with Open-AI to assist anyone having problems - give it a try! - https://chatgpt.com/g/g-68d86345f4c4819183c417b3790499c7-mesh-api-setup-assistant
 
 
 
 
-![MESH-AI](https://github.com/user-attachments/assets/438dc643-6727-439d-a719-0fb905bec920)
+![MESH-API](https://github.com/user-attachments/assets/438dc643-6727-439d-a719-0fb905bec920)
 
 
 
-**MESH-AI** is an experimental project that bridges [Meshtastic](https://meshtastic.org/) LoRa mesh networks with powerful AI chatbots and 3rd party APIs. This is the SECOND BETA RELEASE!
+**MESH-API** is an experimental project that bridges [Meshtastic](https://meshtastic.org/) LoRa mesh networks with powerful AI chatbots and 3rd party APIs. This is the SECOND BETA RELEASE!
 
-## What Sets MESH-AI Apart?
+## What Sets MESH-API Apart?
 
-Most projects in this space stop at being "AI chatbot integrations" — but **MESH-AI is much more than that.**
+Most projects in this space stop at being "AI chatbot integrations" — but **MESH-API is much more than that.**
 
 - **Full Router / Mesh Operator**  
-  MESH-AI isn’t just talking to an LLM. It’s a **protocol bridge** and **mesh backbone**, designed to let LoRa networks, online (or offline) services, and APIs talk to each other in real time.
+  MESH-API isn’t just talking to an LLM. It’s a **protocol bridge** and **mesh backbone**, designed to let LoRa networks, online (or offline) services, and APIs talk to each other in real time.
 
 - **Not a One-Trick Pony**  
-  Where other tools simply connect to AI, MESH-AI is built to **route, translate, and post messages** between different systems and services — making it a true hub for both on-grid and off-grid communication.
+  Where other tools simply connect to AI, MESH-API is built to **route, translate, and post messages** between different systems and services — making it a true hub for both on-grid and off-grid communication.
 
 - **Expandable by Design**  
   Any software with a working API can be integrated. That means you can merge in external services, dashboards, or automation platforms, extending the mesh far beyond its original scope.
 
 - **AI-Powered Off-Grid Networks**  
-  MESH-AI provides the foundation for **self-sufficient LoRa mesh networks enhanced with AI**, ensuring communication, automation, and decision-making remain possible — even without the internet.
+  MESH-API provides the foundation for **self-sufficient LoRa mesh networks enhanced with AI**, ensuring communication, automation, and decision-making remain possible — even without the internet.
 
-In short, MESH-AI bridges the gap between **mesh services** and **online/locally hosted services**, making it a powerful backbone for resilient, intelligent LoRa networks.
+In short, MESH-API bridges the gap between **mesh services** and **online/locally hosted services**, making it a powerful backbone for resilient, intelligent LoRa networks.
 
 > **Disclaimer:**  
 > This project is **NOT ASSOCIATED** with the official Meshtastic Project. It is provided solely as an extension to add AI and advanced features to your Mesh network.  
@@ -56,7 +56,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 - **Home Assistant Integration**  
   - Seamlessly forward messages from a designated channel to Home Assistant’s conversation API. Optionally secure the integration using a PIN.
 - **Advanced Slash Commands**  
-  - Built‑in commands: suffixed `/about-XY`, `/help-XY`, `/motd-XY`, `/whereami-XY`, AI commands with your unique suffix (e.g., `/ai-XY`, `/bot-XY`, `/query-XY`, `/data-XY`), unsuffixed `/test`, and unsuffixed `/emergency` (or `/911`), plus custom commands via `commands_config.json`.
+  - Built‑in commands: suffixed `/about-XY`, `/help-XY`, `/motd-XY`, `/whereami-XY`, `/nodes-XY`, AI commands with your unique suffix (e.g., `/ai-XY`, `/bot-XY`, `/query-XY`, `/data-XY`), unsuffixed `/test`, and unsuffixed `/emergency` (or `/911`), plus custom commands via `commands_config.json`.
   - Commands are now case‑insensitive for improved mobile usability.
   - New: a per-install randomized alias (e.g. `/ai-9z`) is generated on first run to reduce collisions when multiple bots exist on the same mesh or MQTT network. You can change it in `config.json` (field `ai_command`). All AI commands require this suffix, and other built‑ins (except emergency/911) also require your suffix.
   - Strongly encouraged: customize your commands in `commands_config.json` to avoid collisions with other users.
@@ -92,7 +92,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 
 ![image](https://github.com/user-attachments/assets/8ea74ff1-bb34-4e3e-9514-01a98a469cb2)
 
-> An example of an awesome Raspberry Pi 5 powered mini terminal - running MESH-AI & Ollama with HomeAssistant integration!
+> An example of an awesome Raspberry Pi 5 powered mini terminal - running MESH-API & Ollama with HomeAssistant integration!
 > - Top case model here by oinkers1: https://www.thingiverse.com/thing:6571150
 > - Bottom Keyboard tray model here by mr_tbot: https://www.thingiverse.com/thing:7084222
 > - Keyboard on Amazon here:  https://a.co/d/2dAC9ph
@@ -100,7 +100,28 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 
 ---
 
+## Upcoming Features in v0.6.0 PR4
+
+- **API Integration Workflow (Planned)**
+  - A guided workflow for adding new API integrations, including configuration templates, validation checks, and safe test routes before production use.
+  - Goal: make it easier to connect external services without editing core code.
+
+- **Project Name: MESH-API**
+  - The project name now reflects the platform's growing API routing and integration capabilities.
+
+---
+
 ## Changelog
+
+### New Updates in v0.6.0 PR2 → PR3
+- **New `/nodes-XY` command**
+  - Reports online nodes (heard within the last window) and total known nodes.
+- **Online window config**
+  - New `nodes_online_window_sec` setting controls the online window (default 2 hours).
+- **Ollama stability limit**
+  - New `ollama_max_parallel` setting caps concurrent Ollama requests (default 1).
+- **AI command matching improvements**
+  - `/ai-XY` works reliably in channels; legacy `/aiXY` is also accepted for compatibility.
 
 ### New Updates in v0.5.1 → v0.6.0 - SAFETY, STABILITY & COMMUNITY RESPECT
 - **Mesh safety defaults**
@@ -126,7 +147,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
   - New Commands modal overlay: quickly view available commands and descriptions (via the Commands button). Backed by a lightweight JSON endpoint (`/commands_info`).
   - Scrollable panels with sensible max heights; on mobile, each panel can be collapsed/expanded for easier navigation.
   - Ticker UX polish: dismiss button is reliably visible and auto‑hides after a short timeout; dismiss state is remembered across refreshes.
-  - Footer badge updated and repositioned: bottom‑right two‑line, centered label “MESH-AI v0.6.0 PR” and “by: MR-TBOT”.
+  - Footer badge updated and repositioned: bottom‑right two‑line, centered label “MESH-API v0.6.0 PR3” and “by: MR-TBOT”.
   - Emoji reactions: every message now includes a React button that toggles a hidden emoji picker; picking an emoji auto‑sends a reaction (works for both DMs and channel messages).
   - Quick Emoji bar: the “Send a Message” form includes common emojis; clicking inserts into your draft at the cursor without auto‑sending.
   - Reaction feedback: React buttons show Sending/Sent/Failed states and temporarily disable during send to prevent accidental double‑presses.
@@ -135,7 +156,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
   - New config keys summarized above; defaults favor safety and reduce congestion.
 
 ### New Updates in v0.4.2 → v0.5.1 - NOW IN BETA!
-- **REBRANDED TO MESH-AI** 
+- **REBRANDED TO MESH-API** 
 - **WebUI Enhancements**  
   - **Node Search** added for easier node management.  
   - **Channel Message Organization** with support for custom channels in `config.json`.  
@@ -158,7 +179,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 
 ### New Updates in v0.4.1 → v0.4.2
 - **Initial Ubuntu & Ollama Unidecode Support: -**  
-  - User @milo_o - Thank you so much!  I have merged your idea into the main branch - hoping this works as expected for users - please report any problems!  -  https://github.com/mr-tbot/mesh-ai/discussions/19
+  - User @milo_o - Thank you so much!  I have merged your idea into the main branch - hoping this works as expected for users - please report any problems!  -  https://github.com/mr-tbot/mesh-api/discussions/19
 - **Emergency Email Google Maps Link:**  
   - Emergency email now includes a Google Maps link to the sender's location, rather than just coordinates. - Great call, @Nlantz79!  (Remember - this is only as accurate as the sender node's location precision allows!)
 
@@ -240,7 +261,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
    - **`messages.log`** for persistent logging of all incoming messages, commands, and emergencies.  
    - Distinct JSON config files: `config.json`, `commands_config.json`, and `motd.json`.  
 - **Refined Startup & Script Structure**  
-   - A new `Run MESH-AI - Windows.bat` script for straightforward Windows startup.  
+  - A new `Run MESH-API - Windows.bat` script for straightforward Windows startup.  
    - Added disclaimers for alpha usage throughout the code.  
    - Streamlined reconnection and exception handling logic with more robust error-handling.  
 - **General Stability & Code Quality Enhancements**  
@@ -252,11 +273,11 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 ## Quick Start (Windows)
 
 1. **Download/Clone**  
-   - Clone the repository or copy the **mesh-ai** folder to your Desktop.  (Rename and remove "-main" tag from the folder name if downloading as ZIP)
+  - Clone the repository or copy the **mesh-api** folder to your Desktop.  (Rename and remove "-main" tag from the folder name if downloading as ZIP)
 2. **Install Dependencies:**  
    - Create a virtual environment:
      ```bash
-     cd path\to\mesh-ai
+    cd path\to\mesh-api
      python -m venv venv
      venv\Scripts\activate
      ```
@@ -268,9 +289,9 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 3. **Configure Files:**  
    - Edit `config.json`, `commands_config.json`, and `motd.json` as needed. Refer to the **Configuration** section below.
 4. **Start the Bot:**  
-   - Run the bot by double‑clicking `Run MESH-AI - Windows.bat` or by executing:
+  - Run the bot by double‑clicking `Run MESH-API - Windows.bat` or by executing:
      ```bash
-     python mesh-ai.py
+    python mesh-api.py
      ```
 5. **Access the WebUI Dashboard:**  
    - Open your browser and navigate to [http://localhost:5000/dashboard](http://localhost:5000/dashboard).
@@ -280,20 +301,20 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 ## Quick Start (Ubuntu / Linux)
 
 1. **Download/Clone**  
-   - Clone the repository or copy the **mesh-ai** folder to your preferred directory:
+  - Clone the repository or copy the **mesh-api** folder to your preferred directory:
      ```bash
-     git clone https://github.com/mr-tbot/mesh-ai.git
-     cd mesh-ai
+    git clone https://github.com/mr-tbot/mesh-api.git
+    cd mesh-api
      ```
 
-2. **Create and Activate a Virtual Environment Named `mesh-ai`:**  
+2. **Create and Activate a Virtual Environment Named `mesh-api`:**  
    - Create the virtual environment:
      ```bash
-     python3 -m venv mesh-ai
+    python3 -m venv mesh-api
      ```
    - Activate the virtual environment:
      ```bash
-     source mesh-ai/bin/activate
+    source mesh-api/bin/activate
      ```
 
 3. **Install Dependencies:**  
@@ -309,7 +330,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 5. **Start the Bot:**  
    - Run the bot by executing:
      ```bash
-     python mesh-ai.py
+    python mesh-api.py
      ```
 
 6. **Access the WebUI Dashboard:**  
@@ -326,7 +347,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 
 2. **Prepare the Volume Structure**  
    - In the root of your project directory:
-   - Extract the "docker-required-volumes.zip" - The included "config" & "logs" folders should be within your "mesh-ai folder"
+  - Extract the "docker-required-volumes.zip" - The included "config" & "logs" folders should be within your "mesh-api folder"
    - This file structure differs from the standard release to accommodate volumes for docker
    - These files are placed in order to prevent docker from replacing these with directories on first start and throwing errors.
    - Make any changes to config files as needed before moving forward.
@@ -334,7 +355,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 File structure should look like this:
 
    ```bash
-   mesh-ai/
+  mesh-api/
    ├── config/
    │   ├── config.json
    │   ├── commands_config.json
@@ -350,7 +371,7 @@ File structure should look like this:
    - An example docker-compose-yaml is included in the github repository - please adjust as needed.
    - From the project directory, run:
    ```bash
-   docker pull mrtbot/mesh-ai:latest
+  docker pull mrtbot/mesh-api:latest
    docker-compose up -d
   
 
@@ -395,13 +416,27 @@ The latest v0.6.0 Web-UI revamp!  Coming together!
   - `commands_config.json` — custom slash commands and AI prompts
   - `motd.json` — the Message of the Day string shown in the UI
 - Make edits and click Save. The editor validates JSON before saving (for JSON files) and writes changes atomically to prevent partial/corrupted updates.
+- All `config.json` options are available here since the editor loads and saves the full file.
 - Changes to some settings may require restarting the app/container to take effect (e.g., provider, connectivity, or Discord/Twilio credentials).
 - Security note: If you expose the WebUI beyond localhost, protect access to the dashboard since configuration files may contain secrets (API keys, tokens).
+
+#### WebUI Config Options (Quick Guide)
+
+The Config Editor includes a grouped help panel. These are the main groups and what they cover:
+
+- **Core**: AI provider selection, system prompt, alias suffix, AI node name, local location string.
+- **Diagnostics**: debug logging and message log limits.
+- **Providers**: LM Studio, OpenAI, Ollama, and Home Assistant settings.
+- **Connectivity**: WiFi, serial, or mesh interface options and advanced node overrides.
+- **Policy**: Reply behavior and MQTT response gating.
+- **Performance**: Chunk sizing and delays for radio-friendly responses.
+- **Channels**: Friendly channel names and `/nodes-XY` online window.
+- **Integrations**: Home Assistant, Discord, Twilio, and SMTP credentials and routing.  (future home of API integration settings)
 
 ### How AI messages are identified and ignored by other bots
 
 - AI responses include a very short prefix marker `m@i` at the start of the message body. This is not configurable on purpose and is capped at 3 characters to conserve airtime.
-- Other MESH-AI instances will ignore messages that start with this marker, preventing bots from talking to each other.
+- Other MESH-API instances will ignore messages that start with this marker, preventing bots from talking to each other.
 - Each instance also tracks node IDs that have sent AI-tagged messages and ignores further messages from those nodes.
 
 #### What is bot‑looping and why is it a problem?
@@ -411,7 +446,7 @@ The latest v0.6.0 Web-UI revamp!  Coming together!
   - Messages may be re‑broadcast via MQTT and multiple gateways, multiplying replies.
   - Nodes can buffer/retry after brief outages, re‑triggering the loop even if you silence one side.
   - Different bots might parse/quote each other in ways that keep producing “valid” prompts.
-- MESH‑AI mitigations:
+- MESH‑API mitigations:
   - A fixed 3‑char marker (`m@i`) at the start of AI replies so other instances will ignore them.
   - A memory of node IDs that have emitted AI‑tagged messages to avoid engaging those nodes.
   - Conservative defaults: no LongFast replies by default and MQTT response gating disabled by default.
@@ -421,7 +456,7 @@ The latest v0.6.0 Web-UI revamp!  Coming together!
 
 ## Using the API
 
-The MESH-AI server (running on Flask) exposes the following endpoints:
+The MESH-API server (running on Flask) exposes the following endpoints:
 
 - **GET `/messages`**  
   Retrieve the last 100 messages in JSON format.
@@ -450,7 +485,7 @@ The MESH-AI server (running on Flask) exposes the following endpoints:
 
 ## Configuration
 
-Your `config.json` file controls almost every aspect of MESH-AI. Below is an example configuration that includes both the previous settings and the new options:
+Your `config.json` file controls almost every aspect of MESH-API. Below is an example configuration that includes both the previous settings and the new options:
 
 ```json
 {
@@ -461,7 +496,7 @@ Your `config.json` file controls almost every aspect of MESH-AI. Below is an exa
   "wifi_port": 4403,  // Default port for WiFi connection
   
   "serial_port": "",  // Set the serial port if using a USB connection (e.g., /dev/ttyUSB0 on Linux or COMx on Windows)
-  // "serial_baud": 460800,  // Set baud rate for long USB runs or subpar USB connections (uncomment to use)
+  "serial_baud": 460800,  // Set baud rate for long USB runs or subpar USB connections
 
   "ai_provider": "lmstudio, openai, or ollama",  // Select the AI provider: "lmstudio", "openai", or "ollama"
   "system_prompt": "You are a helpful assistant responding to mesh network chats. Respond in as few words as possible while still answering fully.",  // System prompt for AI interaction
@@ -478,6 +513,7 @@ Your `config.json` file controls almost every aspect of MESH-AI. Below is an exa
   "ollama_url": "http://localhost:11434/api/generate",  // URL for Ollama's API
   "ollama_model": "llama3",  // Ollama model (e.g., "llama3")
   "ollama_timeout": 60,  // Timeout in seconds for Ollama API requests
+  "ollama_max_parallel": 1,  // Max concurrent Ollama requests (Pi stability)
   "ollama_keep_alive": "5m",  // Keep the selected model loaded (e.g., "5m"); set to "0" to unload immediately
   "ollama_options": {  // Optional generation options for Ollama requests
     "num_ctx": 2048,
@@ -510,13 +546,14 @@ Your `config.json` file controls almost every aspect of MESH-AI. Below is an exa
   "reply_in_directs": true,  // Set to true to allow AI to reply in direct messages
   "ai_respond_on_longfast": false,  // Do NOT respond on LongFast (channel 0) by default; enable only with mesh/community consent
   "respond_to_mqtt_messages": false,  // If true, the bot will respond to messages that arrived via MQTT (default false to prevent multi-replies)
+  "nodes_online_window_sec": 7200,  // Window for /nodes-XY online count (seconds)
   
   "chunk_size": 200,  // Maximum size for message chunks
   "max_ai_chunks": 5,  // Maximum number of chunks to split AI responses into
   "chunk_delay": 10,  // Delay between message chunks to reduce congestion
   
   "local_location_string": "@ YOUR LOCATION HERE",  // Local string for your node's location (e.g., "@ Home", "@ Roof Node")
-  "ai_node_name": "Mesh-AI-Alpha",  // Name for your AI node
+  "ai_node_name": "Mesh-API-Alpha",  // Name for your AI node
   "ai_command": "/ai-9z",  // Randomized per-install alias for built-in AI commands to prevent AI clashing and looping (change the suffix to your preference)
   "max_message_log": 0,  // Set the maximum number of messages to log (set to 0 for unlimited)
 
@@ -526,6 +563,10 @@ Your `config.json` file controls almost every aspect of MESH-AI. Below is an exa
   "twilio_sid": "TWILIO_SID",  // Twilio SID (replace with your SID)
   "twilio_auth_token": "TWILIO_AUTH_TOKEN",  // Twilio Auth Token (replace with your Auth Token)
   "twilio_from_number": "+14444444444",  // Twilio phone number to send messages from
+
+  "twilio_inbound_target": "channel",  // "channel" or "node" for inbound SMS routing
+  "twilio_inbound_channel_index": 1,  // Channel index to route inbound SMS (if target is "channel")
+  "twilio_inbound_node": "!FFFFFFFF",  // Node ID to route inbound SMS (if target is "node")
 
   "smtp_host": "SMTP HOST HERE",  // SMTP server hostname (e.g., smtp.gmail.com)
   "smtp_port": 465,  // SMTP server port (465 for SSL, or 587 for TLS)
@@ -538,7 +579,8 @@ Your `config.json` file controls almost every aspect of MESH-AI. Below is an exa
   "discord_send_emergency": false,  // Set to true to send emergency alerts to Discord
   "discord_send_ai": false,  // Set to true to send AI responses to Discord
   "discord_send_all": false,  // Set to true to send all messages to Discord
-  "discord_receive_enabled": false,  // Enable polling Discord for inbound messages
+  "discord_receive_enabled": true,  // Enable polling Discord for inbound messages
+  "discord_response_channel_index": null,  // Optional channel index for Discord AI responses
   "discord_bot_token": "",  // Discord Bot token (required if receive is enabled)
   "discord_channel_id": "",  // Discord channel ID to poll for inbound messages
   "discord_inbound_channel_index": 1  // Channel index to route inbound Discord messages into the mesh
@@ -600,7 +642,7 @@ Your `config.json` file controls almost every aspect of MESH-AI. Below is an exa
 - **Access the Developer Portal:**  
   Go to the [Discord Developer Portal](https://discord.com/developers/applications) and sign in with your Discord account.
 - **Create a New Application:**  
-  Click on "New Application," give it a name (e.g., *MESH-AI Bot*), and confirm.
+  Click on "New Application," give it a name (e.g., *MESH-API Bot*), and confirm.
 - **Add a Bot to Your Application:**  
   - Select your application, then navigate to the **Bot** tab on the left sidebar.  
   - Click on **"Add Bot"** and confirm by clicking **"Yes, do it!"**  
@@ -650,10 +692,10 @@ Update your configuration file with the following keys (replace placeholder text
 - **Enable Message Polling:**  
   Set `"discord_receive_enabled": true` to allow the bot to poll for new messages.
 - **Routing:**  
-  The configuration key `"discord_inbound_channel_index"` determines the channel number used by MESH-AI for routing incoming Discord messages. Make sure it matches your setup.
+  The configuration key `"discord_inbound_channel_index"` determines the channel number used by MESH-API for routing incoming Discord messages. Make sure it matches your setup.
 
 #### 6. Testing Your Discord Setup
-- **Restart MESH-AI:**  
+- **Restart MESH-API:**  
   With the updated configuration, restart your bot.
 - **Check Bot Activity:**  
   Verify that the bot is present in your server, that it can see messages in the designated channel, and that it can send responses.  
@@ -739,7 +781,7 @@ Update your configuration file with the following keys (replace placeholder text
 
 ## Conclusion
 
-MESH-AI BETA v0.6.0 builds on the v0.5.1 foundation with safer defaults, improved resilience, and a more usable WebUI (commands modal, better layout, and clearer startup info). Whether you’re chatting directly with your node, integrating with Home Assistant, or leveraging multi‑channel alerting (Twilio, Email, Discord), this release offers a more comprehensive and reliable off‑grid AI assistant experience.
+MESH-API BETA v0.6.0 builds on the v0.5.1 foundation with safer defaults, improved resilience, and a more usable WebUI (commands modal, better layout, and clearer startup info). Whether you’re chatting directly with your node, integrating with Home Assistant, or leveraging multi‑channel alerting (Twilio, Email, Discord), this release offers a more comprehensive and reliable off‑grid AI assistant experience.
 
 **Enjoy tinkering, stay safe, and have fun!**  
 Please share your feedback or join our community on GitHub.

@@ -7,6 +7,8 @@
   
   "ai_respond_on_longfast": false,
   "respond_to_mqtt_messages": false,
+
+  "nodes_online_window_sec": 7200,
   
   "serial_port": "/dev/ttyUSB0",
   "serial_baud": 460800,
@@ -27,6 +29,7 @@
   "ollama_url": "http://localhost:11434/api/generate",
   "ollama_model": "llama3",
   "ollama_timeout": 60,
+  "ollama_max_parallel": 1,
   "ollama_options": {},
   "ollama_keep_alive": "10m",
 
@@ -60,7 +63,7 @@
   "chunk_delay": 10,
   
   "local_location_string": "@ YOUR LOCATION HERE",
-  "ai_node_name": "Mesh-AI-Alpha",
+  "ai_node_name": "Mesh-API-Alpha",
 
   "force_node_num": null,
   "max_message_log": 0,
