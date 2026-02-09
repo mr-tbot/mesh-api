@@ -2,7 +2,7 @@
 
 - some updated features and packages may introduce unforeseen bugs - PLEASE REPORT ANY ISSUES ASAP BEFORE FULL PACKAGE RELEASE AND DOCKER IMAGE UPDATES.
 
-- PLEASE NOTE - There are new requirements and new config options - v0.6.0 updates many required library versions - and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
+- PLEASE NOTE - There are new requirements and new config options - v0.6.0 PR3 AGAIN updates many required library versions - and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
 
 - Having issues getting up and running?  As of v0.6.0 I have created a custom GPT with Open-AI to assist anyone having problems - give it a try! - https://chatgpt.com/g/g-68d86345f4c4819183c417b3790499c7-mesh-api-setup-assistant
 
