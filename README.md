@@ -1,4 +1,4 @@
-# MESH-API (BETA v0.6.0 - PRE-RELEASE 3) 
+# MESH-API (BETA v0.6.0 - PRE-RELEASE 3) - Formerly Known as MESH-AI - Renamed based on future planned upgrades coming soon!
 
 - some updated features and packages may introduce unforeseen bugs - PLEASE REPORT ANY ISSUES ASAP BEFORE FULL PACKAGE RELEASE AND DOCKER IMAGE UPDATES.
 
