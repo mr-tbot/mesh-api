@@ -108,6 +108,226 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 > - Bottom Keyboard tray model here by mr_tbot: https://www.thingiverse.com/thing:7084222
 > - Keyboard on Amazon here:  https://a.co/d/2dAC9ph
 
+---
+
+## Quick Start (Windows)
+
+1. **Download/Clone**  
+  - Clone the repository or copy the **mesh-api** folder to your Desktop.  (Rename and remove "-main" tag from the folder name if downloading as ZIP)
+2. **Install Dependencies:**  
+   - Create a virtual environment:
+     ```bash
+    cd path\to\mesh-api
+     python -m venv venv
+     venv\Scripts\activate
+     ```
+   - Upgrade pip and install required packages:
+     ```bash
+     pip install --upgrade pip
+     pip install -r requirements.txt
+     ```
+3. **Configure Files:**  
+   - Edit `config.json`, `commands_config.json`, and `motd.json` as needed. Refer to the **Configuration** section below.
+4. **Start the Bot:**  
+  - Run the bot by double‑clicking `Run MESH-API - Windows.bat` or by executing:
+     ```bash
+    python mesh-api.py
+     ```
+5. **Access the WebUI Dashboard:**  
+   - Open your browser and navigate to [http://localhost:5000/dashboard](http://localhost:5000/dashboard).
+
+---
+
+## Quick Start (Ubuntu / Linux)
+
+1. **Download/Clone**  
+  - Clone the repository or copy the **mesh-api** folder to your preferred directory:
+     ```bash
+    git clone https://github.com/mr-tbot/mesh-api.git
+    cd mesh-api
+     ```
+
+2. **Create and Activate a Virtual Environment Named `mesh-api`:**  
+   - Create the virtual environment:
+     ```bash
+    python3 -m venv mesh-api
+     ```
+   - Activate the virtual environment:
+     ```bash
+    source mesh-api/bin/activate
+     ```
+
+3. **Install Dependencies:**  
+   - Upgrade pip and install the required packages:
+     ```bash
+     pip install --upgrade pip
+     pip install -r requirements.txt
+     ```
+
+4. **Configure Files:**  
+   - Edit `config.json`, `commands_config.json`, and `motd.json` as needed. Refer to the **Configuration** section in the documentation for details.
+
+5. **Start the Bot:**  
+   - Run the bot by executing:
+     ```bash
+    python mesh-api.py
+     ```
+
+6. **Access the WebUI Dashboard:**  
+   - Open your browser and navigate to [http://localhost:5000/dashboard](http://localhost:5000/dashboard).
+
+
+## Quick Start (Docker)
+
+1. **Prerequisites**  
+   - Docker installed on your host (Linux, macOS, Windows or Raspberry Pi).  (Current Images Built for Linux x86 & ARM64 Raspberry Pi)
+   - Docker support is currently untested on Windows & MacOS, and the Raspberry Pi image remains fresh and untested - please report back!
+   - A Meshtastic device connected via USB, WiFi, or Bluetooth (BLE)
+   - If needed, uncomment USB sections and set identifiers such as `/dev/ttyUSB0` or `\\.\COM3`.
+
+2. **Prepare the Volume Structure**  
+   - In the root of your project directory:
+  - Extract the "docker-required-volumes.zip" - The included "config" & "logs" folders should be within your "mesh-api folder"
+   - This file structure differs from the standard release to accommodate volumes for docker
+   - These files are placed in order to prevent docker from replacing these with directories on first start and throwing errors.
+   - Make any changes to config files as needed before moving forward.
+
+File structure should look like this:
+
+   ```bash
+  mesh-api/
+   ├── config/
+   │   ├── config.json
+   │   ├── commands_config.json
+   │   └── motd.json
+   └── logs/
+    ├── script.log
+    ├── messages.log
+    └── messages_archive.json
+```
+
+
+3. **Pull & run the Docker Image using docker-compose**
+   - An example docker-compose-yaml is included in the github repository - please adjust as needed.
+   - From the project directory, run:
+   ```bash
+  docker pull mrtbot/mesh-api:latest
+   docker-compose up -d
+   ```
+
+4. **Access the WebUI Dashboard:**  
+   - Open your browser and navigate to [http://localhost:5000/dashboard](http://localhost:5000/dashboard).
+
+---
+
+## Supported Mesh Networks
+
+MESH-API supports **two mesh radio platforms** that can operate independently or be **bridged together** for cross-network communication.
+
+### Meshtastic (Primary)
+
+[Meshtastic](https://meshtastic.org/) is MESH-API's primary mesh network. Connection is handled automatically by the core — just plug in your Meshtastic device and configure the connection method in `config.json`.
+
+| Setting | Description |
+|---------|-------------|
+| `use_wifi` | Set `true` to connect via TCP/WiFi instead of USB serial |
+| `wifi_host` | IP address of your Meshtastic node (when using WiFi) |
+| `wifi_port` | TCP port (default `4403`) |
+| `serial_port` | USB serial port (e.g. `/dev/ttyUSB0` or `COM3`) — leave empty for auto-detect |
+| `serial_baud` | Baud rate (default `460800`) |
+| `use_mesh_interface` | Set `true` for direct MeshInterface mode (no serial/WiFi) |
+
+**All MESH-API features** — AI commands, slash commands, emergency alerts, extensions, WebUI dashboard — work natively over the Meshtastic connection.
+
+### MeshCore (Extension-Based Bridge)
+
+[MeshCore](https://meshcore.co.uk/) is a lightweight, multi-hop LoRa mesh firmware focused on embedded packet routing. MESH-API supports MeshCore through the **MeshCore extension** (`extensions/meshcore/`), which connects to a **separate** MeshCore companion-firmware device.
+
+> **Hardware requirement:** You need **two separate LoRa devices** — one running Meshtastic (connected to MESH-API core) and one running MeshCore companion firmware (connected to the MeshCore extension via USB serial or TCP/WiFi). Each device has its own independent radio settings.
+
+#### How It Works
+
+```
+┌──────────────┐           ┌──────────────┐           ┌──────────────┐
+│  Meshtastic  │◀── USB ──▶│   MESH-API   │◀── USB ──▶│   MeshCore   │
+│    Device    │  or WiFi  │   (Server)   │  or TCP   │   Companion  │
+│              │           │              │           │    Device    │
+└──────┬───────┘           └──────┬───────┘           └──────┬───────┘
+       │                          │                          │
+  Meshtastic                 Bridges chat              MeshCore
+  Mesh Network              + commands                 Mesh Network
+```
+
+- **Bidirectional chat bridging** — Messages flow between configurable Meshtastic and MeshCore channels, tagged with their origin (`[MC]` for MeshCore, `[MT]` for Meshtastic) to show where each message came from.
+- **Full command support** — MeshCore users can issue the same `/slash` commands that Meshtastic users can (AI queries, `/help`, `/emergency`, custom commands, etc.).
+- **Direct message support** — Optionally bridge DMs between the two networks.
+- **Emergency relay** — Emergency alerts triggered on either network are forwarded to the other.
+- **Independent command processing** — MeshCore users get AI responses sent directly back to their MeshCore device without needing to go through Meshtastic.
+
+#### MeshCore Quick Setup
+
+1. **Install the MeshCore Python library:**
+   ```bash
+   pip install meshcore
+   ```
+   *(This is already included in `requirements.txt`)*
+
+2. **Flash a companion device** with MeshCore companion firmware:
+   - Visit [https://flasher.meshcore.co.uk](https://flasher.meshcore.co.uk)
+   - Flash the **Companion** firmware type (Serial or WiFi variant depending on your setup)
+
+3. **Enable the extension** — edit `extensions/meshcore/config.json`:
+   ```json
+   {
+     "enabled": true,
+     "connection_type": "serial",
+     "serial_port": "COM5",
+     "serial_baud": 115200,
+     "bridge_enabled": true,
+     "bridge_meshcore_channel_to_meshtastic_channel": { "0": 1 },
+     "bridge_meshtastic_channels_to_meshcore_channel": { "1": 0 }
+   }
+   ```
+
+4. **Restart MESH-API** — the extension will connect to the MeshCore device and begin bridging.
+
+5. **Verify** — use the `/meshcore` command from either network, or visit `http://localhost:5000/api/meshcore/status`.
+
+#### Channel Mapping
+
+Channel mapping is defined by two config keys:
+
+- **`bridge_meshcore_channel_to_meshtastic_channel`** — Maps MeshCore channel numbers to Meshtastic channel numbers. Example: `{"0": 1}` means MeshCore public channel 0 bridges to Meshtastic channel 1.
+- **`bridge_meshtastic_channels_to_meshcore_channel`** — The reverse direction. Example: `{"1": 0}` means Meshtastic channel 1 bridges to MeshCore channel 0.
+
+You can map multiple channels in each direction:
+```json
+{
+  "bridge_meshcore_channel_to_meshtastic_channel": { "0": 1, "1": 2 },
+  "bridge_meshtastic_channels_to_meshcore_channel": { "1": 0, "2": 1 }
+}
+```
+
+#### Echo Prevention
+
+The extension includes multiple layers of loop prevention:
+- **Origin tags** (`[MC]` / `[MT]`) — messages carrying these tags are recognized as bridged and not re-bridged.
+- **AI prefix detection** — AI-generated responses are not echoed back.
+- **Rolling buffer** — a buffer of the last 50 bridged messages prevents exact duplicates.
+
+#### Connection Types
+
+| Type | Config | Description |
+|------|--------|-------------|
+| USB Serial | `"connection_type": "serial"` | Direct USB connection to a MeshCore companion device |
+| TCP/WiFi | `"connection_type": "tcp"` | Network connection to a WiFi-enabled MeshCore companion |
+
+See the full config reference in the [MeshCore Extension](#meshcore) section below.
+
+---
+
+<img width="1698" height="862" alt="image" src="https://github.com/user-attachments/assets/e739e599-ce5b-47d1-82c2-512ad3b0d94b" />
+The latest v0.6.0 Web-UI revamp!  Coming together!
 
 ---
 
@@ -129,6 +349,7 @@ Each extension is a self-contained plugin in the `extensions/` directory with it
 - **[Emergency & Weather Extensions](#emergency--weather-extensions):** [NWS Alerts](#nws-alerts) · [OpenWeatherMap](#openweathermap) · [USGS Earthquakes](#usgs-earthquakes) · [GDACS](#gdacs) · [Amber Alerts](#amber-alerts) · [NASA Space Weather](#nasa-space-weather)
 - **[Ham Radio & Off-Grid Extensions](#ham-radio--off-grid-extensions):** [Winlink](#winlink) · [APRS](#aprs) · [BBS](#bbs)
 - **[Smart Home Extensions](#smart-home-extensions):** [Home Assistant (Extension)](#home-assistant-extension)
+- **[Mesh Bridging Extensions](#mesh-bridging-extensions):** [MeshCore](#meshcore)
 
 ---
 
@@ -923,6 +1144,47 @@ This extension functions as an **AI provider** — when `ai_provider` is set to 
 
 ---
 
+### Mesh Bridging Extensions
+
+#### MeshCore
+
+Bidirectional bridge between the Meshtastic mesh network and a [MeshCore](https://meshcore.co.uk/) mesh network. Requires a separate MeshCore companion-firmware device connected via USB serial or TCP/WiFi. See also [Supported Mesh Networks — MeshCore](#meshcore-extension-based-bridge) above for setup instructions.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/meshcore` | Show MeshCore bridge status (connected device, bridge state, channel map) |
+
+**Config (`extensions/meshcore/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `connection_type` | string | `"serial"` | `"serial"` or `"tcp"` |
+| `serial_port` | string | `""` | Serial port for the MeshCore companion device (e.g. `COM5`, `/dev/ttyACM0`) |
+| `serial_baud` | int | `115200` | Serial baud rate |
+| `tcp_host` | string | `""` | TCP/WiFi host (when `connection_type` is `"tcp"`) |
+| `tcp_port` | int | `5000` | TCP port for MeshCore WiFi companion |
+| `bridge_enabled` | bool | `true` | Enable bidirectional channel bridging |
+| `bridge_meshcore_channel_to_meshtastic_channel` | object | `{"0": 1}` | Map MeshCore channel → Meshtastic channel |
+| `bridge_meshtastic_channels_to_meshcore_channel` | object | `{"1": 0}` | Map Meshtastic channel → MeshCore channel |
+| `bridge_dm` | bool | `false` | Bridge direct messages between networks |
+| `commands_enabled` | bool | `true` | Allow MeshCore users to issue `/commands` |
+| `ai_commands_enabled` | bool | `true` | Allow MeshCore users to send AI queries |
+| `meshcore_origin_tag` | string | `"[MC]"` | Tag prepended to messages originating from MeshCore |
+| `meshtastic_origin_tag` | string | `"[MT]"` | Tag prepended to messages originating from Meshtastic |
+| `emergency_relay` | bool | `true` | Relay emergency alerts between networks |
+| `max_message_length` | int | `200` | Max characters per bridged message |
+| `reconnect_interval` | int | `30` | Seconds between reconnect attempts on disconnect |
+
+**API Endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/meshcore/status` | GET | Returns JSON with connection status, bridge state, and channel mappings |
+
+**Hooks:** `on_message()` (outbound Meshtastic→MeshCore bridging), `on_load()` / `on_unload()` (lifecycle).
+
+---
+
 ### Extension Management
 
 **Listing Extensions:** Use the `/extensions` command on the mesh to see all loaded extensions and their status.
@@ -1431,7 +1693,10 @@ The `extensions/` directory includes 25+ working extensions you can reference:
   - A guided workflow for adding new API integrations, including configuration templates, validation checks, and safe test routes before production use.
   - Goal: make it easier to connect external services without editing core code.
 
-- **MeshCore Routing Support (Coming Soon)**
+- **MeshCore Routing Support (Initial Implementation — v0.6.0)**
+  - MeshCore extension added with bidirectional bridge, command support, and AI integration.
+  - Supports USB serial and TCP/WiFi connections to MeshCore companion devices.
+  - See [Supported Mesh Networks — MeshCore](#meshcore-extension-based-bridge) and the [MeshCore extension reference](#meshcore) for details.
 
 ---
 
@@ -1636,124 +1901,6 @@ The `extensions/` directory includes 25+ working extensions you can reference:
 - **General Stability & Code Quality Enhancements**  
    - Thorough refactoring of the code to be more modular and maintainable.  
    - Better debugging hooks, improved concurrency handling, and safer resource cleanup.  
-
----
-
-## Quick Start (Windows)
-
-1. **Download/Clone**  
-  - Clone the repository or copy the **mesh-api** folder to your Desktop.  (Rename and remove "-main" tag from the folder name if downloading as ZIP)
-2. **Install Dependencies:**  
-   - Create a virtual environment:
-     ```bash
-    cd path\to\mesh-api
-     python -m venv venv
-     venv\Scripts\activate
-     ```
-   - Upgrade pip and install required packages:
-     ```bash
-     pip install --upgrade pip
-     pip install -r requirements.txt
-     ```
-3. **Configure Files:**  
-   - Edit `config.json`, `commands_config.json`, and `motd.json` as needed. Refer to the **Configuration** section below.
-4. **Start the Bot:**  
-  - Run the bot by double‑clicking `Run MESH-API - Windows.bat` or by executing:
-     ```bash
-    python mesh-api.py
-     ```
-5. **Access the WebUI Dashboard:**  
-   - Open your browser and navigate to [http://localhost:5000/dashboard](http://localhost:5000/dashboard).
-
----
-
-## Quick Start (Ubuntu / Linux)
-
-1. **Download/Clone**  
-  - Clone the repository or copy the **mesh-api** folder to your preferred directory:
-     ```bash
-    git clone https://github.com/mr-tbot/mesh-api.git
-    cd mesh-api
-     ```
-
-2. **Create and Activate a Virtual Environment Named `mesh-api`:**  
-   - Create the virtual environment:
-     ```bash
-    python3 -m venv mesh-api
-     ```
-   - Activate the virtual environment:
-     ```bash
-    source mesh-api/bin/activate
-     ```
-
-3. **Install Dependencies:**  
-   - Upgrade pip and install the required packages:
-     ```bash
-     pip install --upgrade pip
-     pip install -r requirements.txt
-     ```
-
-4. **Configure Files:**  
-   - Edit `config.json`, `commands_config.json`, and `motd.json` as needed. Refer to the **Configuration** section in the documentation for details.
-
-5. **Start the Bot:**  
-   - Run the bot by executing:
-     ```bash
-    python mesh-api.py
-     ```
-
-6. **Access the WebUI Dashboard:**  
-   - Open your browser and navigate to [http://localhost:5000/dashboard](http://localhost:5000/dashboard).
-
-
-## Quick Start (Docker)
-
-1. **Prerequisites**  
-   - Docker installed on your host (Linux, macOS, Windows or Raspberry Pi).  (Current Images Built for Linux x86 & ARM64 Raspberry Pi)
-   - Docker support is currently untested on Windows & MacOS, and the Raspberry Pi image remains fresh and untested - please report back!
-   - A Meshtastic device connected via USB, WiFi, or Bluetooth (BLE)
-   - If needed,uncomment USB sections and set identifiers such as `/dev/ttyUSB0` or `\\.\COM3`.
-
-2. **Prepare the Volume Structure**  
-   - In the root of your project directory:
-  - Extract the "docker-required-volumes.zip" - The included "config" & "logs" folders should be within your "mesh-api folder"
-   - This file structure differs from the standard release to accommodate volumes for docker
-   - These files are placed in order to prevent docker from replacing these with directories on first start and throwing errors.
-   - Make any changes to config files as needed before moving forward.
-
-File structure should look like this:
-
-   ```bash
-  mesh-api/
-   ├── config/
-   │   ├── config.json
-   │   ├── commands_config.json
-   │   └── motd.json
-   └── logs/
-    ├── script.log
-    ├── messages.log
-    └── messages_archive.json
-```
-
-
-3. **Pull & run the Docker Image using docker-compose**
-   - An example docker-compose-yaml is included in the github repository - please adjust as needed.
-   - From the project directory, run:
-   ```bash
-  docker pull mrtbot/mesh-api:latest
-   docker-compose up -d
-  
-
-4. **Access the WebUI Dashboard:**  
-   - Open your browser and navigate to [http://localhost:5000/dashboard](http://localhost:5000/dashboard).
-
----
-
-<img width="1698" height="862" alt="image" src="https://github.com/user-attachments/assets/e739e599-ce5b-47d1-82c2-512ad3b0d94b" />
-The latest v0.6.0 Web-UI revamp!  Coming together!
-
-
-
 
 ---
 
