@@ -5,6 +5,9 @@
   "wifi_host": "MESHTASTIC NODE IP HERE",
   "wifi_port": 4403,
 
+  "use_bluetooth": false,
+  "ble_address": "",
+
   "extensions_path": "./extensions",
   
   "ai_respond_on_longfast": false,

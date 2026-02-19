@@ -146,7 +146,7 @@ The `app_context` dict provides access to core functionality:
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `interface` | `MeshInterface` | The Meshtastic serial/TCP interface |
+| `interface` | `MeshInterface` | The Meshtastic serial/TCP/BLE interface |
 | `send_broadcast_chunks` | `function(iface, text, channel_idx)` | Send broadcast message |
 | `send_direct_chunks` | `function(iface, text, destination_id)` | Send direct message |
 | `add_script_log` | `function(message)` | Core logging function |

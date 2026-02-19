@@ -150,6 +150,13 @@ except ImportError:
     TCPInterface = None
 
 try:
+    from meshtastic.ble_interface import BLEInterface
+    BLE_INTERFACE_AVAILABLE = True
+except ImportError:
+    BLEInterface = None
+    BLE_INTERFACE_AVAILABLE = False
+
+try:
     from meshtastic.mesh_interface import MeshInterface
     MESH_INTERFACE_AVAILABLE = True
 except ImportError:
@@ -399,6 +406,8 @@ SERIAL_BAUD = int(config.get("serial_baud", 921600))  # ← NEW ● default 9216
 USE_WIFI = bool(config.get("use_wifi", False))
 WIFI_HOST = config.get("wifi_host", None)
 WIFI_PORT = int(config.get("wifi_port", 4403))
+USE_BLUETOOTH = bool(config.get("use_bluetooth", False))
+BLE_ADDRESS = config.get("ble_address", "")
 USE_MESH_INTERFACE = bool(config.get("use_mesh_interface", False))
 
 # Safeguards and network behavior toggles
@@ -3740,8 +3749,9 @@ def connect_interface():
 
     Resolution order:
       1. Wi‑Fi TCP bridge
-      2. Local MeshInterface()
-      3. USB SerialInterface (explicit path or auto‑detect)
+      2. Bluetooth Low Energy (BLE)
+      3. Local MeshInterface()
+      4. USB SerialInterface (explicit path or auto‑detect)
     """
     global connection_status, last_error_message
     try:
@@ -3751,13 +3761,29 @@ def connect_interface():
             connection_status, last_error_message = "Connected", ""
             return TCPInterface(hostname=WIFI_HOST, portNumber=WIFI_PORT)
 
-        # 2️⃣  Local mesh interface ---------------------------------------
+        # 2️⃣  Bluetooth Low Energy ----------------------------------------
+        if USE_BLUETOOTH and BLE_INTERFACE_AVAILABLE:
+            if BLE_ADDRESS:
+                print(f"BLEInterface → {BLE_ADDRESS}")
+                iface = BLEInterface(BLE_ADDRESS)
+            else:
+                print("BLEInterface auto‑scan (no address specified) …")
+                iface = BLEInterface(None)
+            connection_status, last_error_message = "Connected", ""
+            return iface
+
+        if USE_BLUETOOTH and not BLE_INTERFACE_AVAILABLE:
+            print("⚠️ Bluetooth requested but BLE support is not available. "
+                  "Install the 'bleak' package: pip install bleak")
+            print("Falling through to next connection method…")
+
+        # 3️⃣  Local mesh interface ---------------------------------------
         if USE_MESH_INTERFACE and MESH_INTERFACE_AVAILABLE:
             print("MeshInterface() for direct‑radio mode")
             connection_status, last_error_message = "Connected", ""
             return MeshInterface()
 
-        # 3️⃣  USB serial --------------------------------------------------
+        # 4️⃣  USB serial --------------------------------------------------
         if SERIAL_PORT:
             print(f"SerialInterface on '{SERIAL_PORT}' (default baud, will switch to {SERIAL_BAUD}) …")
             iface = meshtastic.serial_interface.SerialInterface(devPath=SERIAL_PORT)

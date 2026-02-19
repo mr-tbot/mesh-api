@@ -973,7 +973,7 @@ The `app_context` dict provides access to core functionality:
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `interface` | `MeshInterface` | The Meshtastic serial/TCP interface |
+| `interface` | `MeshInterface` | The Meshtastic serial/TCP/BLE interface |
 | `send_broadcast_chunks` | `function(iface, text, channel_idx)` | Send broadcast message |
 | `send_direct_chunks` | `function(iface, text, destination_id)` | Send direct message |
 | `add_script_log` | `function(message)` | Core logging function |
@@ -1629,7 +1629,7 @@ The `extensions/` directory includes 25+ working extensions you can reference:
 1. **Prerequisites**  
    - Docker installed on your host (Linux, macOS, Windows or Raspberry Pi).  (Current Images Built for Linux x86 & ARM64 Raspberry Pi)
    - Docker support is currently untested on Windows & MacOS, and the Raspberry Pi image remains fresh and untested - please report back!
-   - A Meshtastic device connected via USB or WiFi (No Bluetooth testing Done as of yet)
+   - A Meshtastic device connected via USB, WiFi, or Bluetooth (BLE)
    - If needed,uncomment USB sections and set identifiers such as `/dev/ttyUSB0` or `\\.\COM3`.
 
 2. **Prepare the Volume Structure**  
@@ -1783,6 +1783,9 @@ Below is the **default** `config.json` with inline explanations:
   "use_wifi": false,                       // Set true to connect to your node via WiFi instead of serial
   "wifi_host": "MESHTASTIC NODE IP HERE",  // IP address of your Meshtastic device (WiFi mode)
   "wifi_port": 4403,                       // TCP port for WiFi connection (default 4403)
+
+  "use_bluetooth": false,                   // Set true to connect to your node via Bluetooth Low Energy (BLE)
+  "ble_address": "",                        // BLE MAC address or UUID of your node (leave empty for auto-scan)
 
   "extensions_path": "./extensions",       // Path to the extensions directory
 
@@ -2063,7 +2066,9 @@ Update `extensions/discord/config.json` with the following keys (or use the WebU
   
 - **Device Connection:**  
   - Configure the connection method for your Meshtastic device by setting either the `"serial_port"` or enabling `"use_wifi"` along with `"wifi_host"` and `"wifi_port"`.  
+  - For Bluetooth Low Energy (BLE) connections, set `"use_bluetooth": true` and optionally provide `"ble_address"` with the device MAC address or UUID. Leave `"ble_address"` empty for auto-scan. Requires the `bleak` Python package.
   - Alternatively, enable `"use_mesh_interface"` if applicable.
+  - Connection priority: WiFi TCP > Bluetooth BLE > MeshInterface > USB Serial.
   - Baud Rate is optionally set if you need - this is for longer USB runs (roof nodes connected via USB) and bad USB connections.
   
 - **Message Routing & Commands:**  
