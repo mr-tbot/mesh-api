@@ -1,6 +1,6 @@
 # MESH-API v0.6.0 RC1 - Almost Ready for Full Release & Docker Images!
 
-- **v0.6.0 RC1** — Release Candidate 1! Plugin-based extensions system with 25+ built-in extensions, 12 AI providers, drop-in plugin architecture, and a fully revamped WebUI with Extensions Manager and improved notification sounds. Docker images are coming with the full release!
+- **v0.6.0 RC1** — Release Candidate 1! Plugin-based extensions system with 26+ built-in extensions, 12 AI providers, drop-in plugin architecture, and a fully revamped WebUI with Extensions Manager and improved notification sounds. Docker images are coming with the full release!
 
 - PLEASE NOTE - There are new requirements and new config options - v0.6.0 updates many required library versions and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
 
@@ -52,7 +52,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 ## Features
 
 - **Plugin-Based Extensions System** *(New in v0.6.0)*  
-  - 25+ built-in extensions across 5 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, and Smart Home.
+  - 26+ built-in extensions across 5 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, and Smart Home.
   - Drop-in plugin architecture — add or remove extensions by copying a folder. No core code changes required.
   - Extensions can register slash commands, react to emergencies, observe messages, expose HTTP endpoints, and run background services.
   - **WebUI Extensions Manager** — view, enable/disable, and configure extensions from the dashboard.
@@ -61,6 +61,10 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
   - Support for **Local** models (LM Studio, Ollama), **OpenAI**, **Claude**, **Gemini**, **Grok**, **OpenRouter**, **Groq**, **DeepSeek**, **Mistral**, generic OpenAI-compatible endpoints, and **Home Assistant** integration.
 - **Home Assistant Integration**  
   - Seamlessly forward messages from a designated channel to Home Assistant’s conversation API. Optionally secure the integration using a PIN.
+- **NASA Space Weather Monitoring**  
+  - Track geomagnetic storms, solar flares, coronal mass ejections, and more via NASA's DONKI API. Auto-broadcast significant events to the mesh with configurable Kp index and flare class thresholds. Slash commands: `/spaceweather`, `/solarflare`, `/geomagstorm`.
+- **n8n Workflow Automation**  
+  - Bidirectional bridge with [n8n](https://n8n.io) — forward mesh messages and emergencies to n8n webhook triggers, receive workflow outputs on the mesh, list active workflows, and trigger them via slash commands. Enables powerful no-code automation pipelines for your mesh network.
 - **Advanced Slash Commands**  
   - Built‑in commands: suffixed `/about-XY`, `/help-XY`, `/motd-XY`, `/whereami-XY`, `/nodes-XY`, AI commands with your unique suffix (e.g., `/ai-XY`, `/bot-XY`, `/query-XY`, `/data-XY`), unsuffixed `/test`, and unsuffixed `/emergency` (or `/911`), plus custom commands via `commands_config.json`.
   - Commands are now case‑insensitive for improved mobile usability.
@@ -120,7 +124,7 @@ Each extension is a self-contained plugin in the `extensions/` directory with it
 
 ### Extensions Table of Contents
 
-- **[Communication Extensions](#communication-extensions):** [Discord](#discord) · [Slack](#slack) · [Telegram](#telegram) · [Matrix](#matrix) · [Signal](#signal) · [Mattermost](#mattermost) · [Zello](#zello) · [MQTT (Extension)](#mqtt-extension) · [Webhook Generic](#webhook-generic) · [IMAP](#imap) · [Mastodon](#mastodon)
+- **[Communication Extensions](#communication-extensions):** [Discord](#discord) · [Slack](#slack) · [Telegram](#telegram) · [Matrix](#matrix) · [Signal](#signal) · [Mattermost](#mattermost) · [Zello](#zello) · [MQTT (Extension)](#mqtt-extension) · [Webhook Generic](#webhook-generic) · [IMAP](#imap) · [Mastodon](#mastodon) · [n8n](#n8n)
 - **[Notification Extensions](#notification-extensions):** [Apprise](#apprise) · [Ntfy](#ntfy) · [Pushover](#pushover) · [PagerDuty](#pagerduty) · [OpsGenie](#opsgenie)
 - **[Emergency & Weather Extensions](#emergency--weather-extensions):** [NWS Alerts](#nws-alerts) · [OpenWeatherMap](#openweathermap) · [USGS Earthquakes](#usgs-earthquakes) · [GDACS](#gdacs) · [Amber Alerts](#amber-alerts) · [NASA Space Weather](#nasa-space-weather)
 - **[Ham Radio & Off-Grid Extensions](#ham-radio--off-grid-extensions):** [Winlink](#winlink) · [APRS](#aprs) · [BBS](#bbs)
@@ -414,6 +418,44 @@ Fediverse / Mastodon bridge for posting toots and reading timeline from the mesh
 | `content_warning` | string | `""` | Default content warning / spoiler text |
 
 **Hooks:** `on_emergency` (auto-post).
+
+---
+
+#### n8n
+
+Bidirectional workflow automation bridge with [n8n](https://n8n.io). Forward mesh messages and emergencies to n8n webhook triggers, receive messages from n8n workflows, query instance status, and list or trigger workflows from the mesh.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/n8n` | Show n8n integration status |
+| `/n8n trigger <id>` | Trigger (activate) an n8n workflow by ID |
+| `/n8n workflows` | List active n8n workflows |
+
+**Config (`extensions/n8n/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `webhook_url` | string | `""` | n8n Webhook Trigger URL for outbound messages |
+| `webhook_secret` | string | `""` | Shared secret sent as `X-Webhook-Secret` header |
+| `api_base_url` | string | `"http://localhost:5678"` | n8n instance base URL |
+| `api_key` | string | `""` | n8n API key (Settings → API → Create Key) |
+| `send_emergency` | bool | `true` | Forward emergency alerts to n8n |
+| `send_ai` | bool | `false` | Forward AI responses to n8n |
+| `send_all` | bool | `false` | Forward all mesh messages to n8n |
+| `receive_enabled` | bool | `true` | Accept inbound messages from n8n |
+| `receive_endpoint` | string | `"/n8n/webhook"` | Flask endpoint for inbound n8n→mesh messages |
+| `receive_secret` | string | `""` | Shared secret for inbound verification |
+| `inbound_channel_index` | int/null | `null` | Default mesh channel for inbound messages |
+| `message_field` | string | `"message"` | JSON field containing the message text |
+| `sender_field` | string | `"sender"` | JSON field containing the sender name |
+| `include_metadata` | bool | `true` | Include metadata in outbound payloads |
+| `poll_executions` | bool | `false` | Poll n8n for completed workflow executions |
+| `poll_interval_seconds` | int | `60` | Execution polling interval |
+| `broadcast_channel_index` | int | `0` | Mesh channel index for broadcasts |
+| `bot_name` | string | `"MESH-API"` | Source name in outbound payloads |
+
+**Hooks:** `on_message`, `on_emergency`. Flask route for inbound webhooks.
 
 ---
 
@@ -1421,7 +1463,7 @@ The `extensions/` directory includes 25+ working extensions you can reference:
 
 ### v0.6.0 Release
 - **Plugin-Based Extensions System**
-  - Brand new drop-in plugin architecture with 25+ built-in extensions across 5 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, and Smart Home.
+  - Brand new drop-in plugin architecture with 26+ built-in extensions across 5 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, and Smart Home.
   - Extensions can register slash commands, react to emergencies, observe all mesh messages, expose HTTP endpoints via Flask, and run background polling threads.
   - Each extension is fully self-contained with its own `config.json` — no core code changes required to add, remove, or configure extensions.
   - New `/extensions` mesh command to list all loaded extensions and their status.
@@ -1430,7 +1472,7 @@ The `extensions/` directory includes 25+ working extensions you can reference:
   - Added support for **Claude**, **Gemini**, **Grok**, **OpenRouter**, **Groq**, **DeepSeek**, **Mistral**, and a generic **OpenAI-compatible** endpoint option — in addition to existing LM Studio, OpenAI, Ollama, and Home Assistant providers.
   - All OpenAI-compatible providers share a unified helper for consistent behavior and error handling.
 - **Extension Categories**
-  - **Communication (11):** Discord, Slack, Telegram, Matrix, Signal, Mattermost, Zello, MQTT, Webhook Generic, IMAP, Mastodon
+  - **Communication (12):** Discord, Slack, Telegram, Matrix, Signal, Mattermost, Zello, MQTT, Webhook Generic, IMAP, Mastodon, n8n
   - **Notifications (5):** Apprise, Ntfy, Pushover, PagerDuty, OpsGenie
   - **Emergency/Weather (6):** NWS Alerts, OpenWeatherMap, USGS Earthquakes, GDACS, Amber Alerts, NASA Space Weather
   - **Ham Radio/Off-Grid (3):** Winlink, APRS, BBS (SQLite store-and-forward)

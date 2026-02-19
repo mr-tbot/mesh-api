@@ -1,0 +1,21 @@
+{
+  "enabled": false,
+  "webhook_url": "",
+  "webhook_secret": "",
+  "api_base_url": "http://localhost:5678",
+  "api_key": "",
+  "send_emergency": true,
+  "send_ai": false,
+  "send_all": false,
+  "receive_enabled": true,
+  "receive_endpoint": "/n8n/webhook",
+  "receive_secret": "",
+  "inbound_channel_index": null,
+  "message_field": "message",
+  "sender_field": "sender",
+  "include_metadata": true,
+  "poll_executions": false,
+  "poll_interval_seconds": 60,
+  "broadcast_channel_index": 0,
+  "bot_name": "MESH-API"
+}
