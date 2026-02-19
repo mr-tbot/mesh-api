@@ -40,6 +40,7 @@ RUN pip install --no-cache-dir --upgrade \
 WORKDIR /app
 COPY mesh-api.py .
 COPY requirements.txt .
+COPY extensions/ ./extensions/
 
 RUN pip install --no-cache-dir -r requirements.txt
 

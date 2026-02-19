@@ -1,0 +1,15 @@
+{
+  "enabled": false,
+  "instance_url": "https://mastodon.social",
+  "access_token": "",
+  "default_visibility": "public",
+  "post_prefix": "📡 [Mesh]",
+  "max_toot_length": 500,
+  "broadcast_channel_index": 0,
+  "auto_post_emergency": true,
+  "poll_mentions": false,
+  "poll_interval_seconds": 120,
+  "forward_mentions_to_mesh": true,
+  "hashtags": ["meshtastic", "meshnetwork"],
+  "content_warning": ""
+}

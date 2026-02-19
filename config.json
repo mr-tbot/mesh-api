@@ -4,6 +4,8 @@
   "use_wifi": false,
   "wifi_host": "MESHTASTIC NODE IP HERE",
   "wifi_port": 4403,
+
+  "extensions_path": "./extensions",
   
   "ai_respond_on_longfast": false,
   "respond_to_mqtt_messages": false,
@@ -14,7 +16,7 @@
   "serial_baud": 460800,
 
   "ai_command": "",
-  "ai_provider": "lmstudio, openai, or ollama",
+  "ai_provider": "lmstudio, openai, ollama, claude, gemini, grok, openrouter, groq, deepseek, mistral, or openai_compatible",
   "system_prompt": "You are a helpful assistant responding to mesh network chats. Respond in as few words as possible while still answering fully.",
 
   "lmstudio_url": "http://localhost:1234/v1/chat/completions",
@@ -33,13 +35,40 @@
   "ollama_options": {},
   "ollama_keep_alive": "10m",
 
-  "home_assistant_enabled": false,
-  "home_assistant_channel_index": 1,
-  "home_assistant_url": "http://homeassistant.local:8123/api/conversation/process",
-  "home_assistant_token": "INPUT HA TOKEN HERE",
-  "home_assistant_timeout": 90,
-  "home_assistant_enable_pin": false,
-  "home_assistant_secure_pin": "1234",
+  "claude_api_key": "",
+  "claude_model": "claude-sonnet-4-20250514",
+  "claude_timeout": 60,
+
+  "gemini_api_key": "",
+  "gemini_model": "gemini-2.0-flash",
+  "gemini_timeout": 60,
+
+  "grok_api_key": "",
+  "grok_model": "grok-3",
+  "grok_timeout": 60,
+
+  "openrouter_api_key": "",
+  "openrouter_model": "openai/gpt-4.1-mini",
+  "openrouter_timeout": 60,
+
+  "groq_api_key": "",
+  "groq_model": "llama-3.3-70b-versatile",
+  "groq_timeout": 60,
+
+  "deepseek_api_key": "",
+  "deepseek_model": "deepseek-chat",
+  "deepseek_timeout": 60,
+
+  "mistral_api_key": "",
+  "mistral_model": "mistral-small-latest",
+  "mistral_timeout": 60,
+
+  "openai_compatible_api_key": "",
+  "openai_compatible_url": "",
+  "openai_compatible_model": "",
+  "openai_compatible_timeout": 60,
+
+  "_note_extensions": "Discord, Home Assistant, and other integrations are now configured in their own config.json files under extensions/. Legacy keys here are auto-migrated on first run.",
 
 
   "channel_names": {
@@ -83,16 +112,5 @@
   "smtp_port": 465,
   "smtp_user": "SMTP USER HERE",
   "smtp_pass": "SMTP PASS HERE",
-  "alert_email_to": "ALERT EMAIL HERE",
-
-  "enable_discord": false,
-  "discord_webhook_url": "",
-  "discord_send_emergency": false,
-  "discord_send_ai": false,
-  "discord_send_all": false,
-  "discord_receive_enabled": true,
-  "discord_inbound_channel_index": null,
-  "discord_response_channel_index": null,
-  "discord_bot_token": "",
-  "discord_channel_id": ""
+  "alert_email_to": "ALERT EMAIL HERE"
 }

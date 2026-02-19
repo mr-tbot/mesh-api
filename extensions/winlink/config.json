@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "callsign": "",
+  "gateway_host": "",
+  "gateway_port": 8772,
+  "password": "",
+  "poll_interval_seconds": 300,
+  "auto_forward_to_mesh": true,
+  "broadcast_channel_index": 0,
+  "max_body_length": 250,
+  "outbound_enabled": true,
+  "winlink_api_url": "https://api.winlink.org",
+  "winlink_api_key": "",
+  "rms_relay_path": "",
+  "default_to_address": ""
+}

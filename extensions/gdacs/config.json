@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "poll_interval_seconds": 600,
+  "auto_broadcast": true,
+  "broadcast_channel_index": 0,
+  "alert_levels": ["Red", "Orange"],
+  "event_types": ["EQ", "TC", "FL", "VO", "DR", "WF"],
+  "max_alerts": 10,
+  "center_lat": "",
+  "center_lon": "",
+  "max_distance_km": 0,
+  "max_alert_age_hours": 72
+}

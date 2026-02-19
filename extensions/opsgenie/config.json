@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "api_key": "",
+  "api_base": "https://api.opsgenie.com",
+  "default_priority": "P3",
+  "responders": [],
+  "tags": ["mesh-api", "meshtastic"],
+  "trigger_on_emergency": true,
+  "trigger_on_keywords": ["SOS", "MAYDAY", "EMERGENCY"],
+  "broadcast_channel_index": 0,
+  "poll_alerts": false,
+  "poll_interval_seconds": 120,
+  "auto_close_minutes": 0
+}

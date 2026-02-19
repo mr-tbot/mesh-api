@@ -20,6 +20,9 @@ services:
       - ./mesh-api/logs/messages_archive.json:/app/messages_archive.json
       - ./mesh-api/logs/script.log:/app/script.log
 
+      # Mount extensions directory (optional - for custom extension configs)
+      -  ./mesh-api/extensions:/app/extensions
+
     restart: unless-stopped
   #  healthcheck:  // OPTIONAL SERIAL DEVICE HEALTH CHECK - MODIFY FOR YOUR SERIAL DEVICE.
   #    test: ["CMD", "ls", "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"]

@@ -1,0 +1,15 @@
+{
+  "enabled": false,
+  "routing_key": "",
+  "api_token": "",
+  "service_id": "",
+  "default_severity": "warning",
+  "escalation_policy_id": "",
+  "trigger_on_emergency": true,
+  "trigger_on_keywords": ["SOS", "MAYDAY", "EMERGENCY"],
+  "auto_resolve_minutes": 0,
+  "broadcast_channel_index": 0,
+  "poll_incidents": false,
+  "poll_interval_seconds": 120,
+  "dedup_key_prefix": "mesh-api"
+}

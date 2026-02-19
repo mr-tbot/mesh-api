@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "api_url": "https://zello.io/api",
+  "api_token": "",
+  "channel_name": "",
+  "username": "",
+  "password": "",
+  "send_emergency": false,
+  "send_ai": false,
+  "send_all": false,
+  "inbound_channel_index": null,
+  "tts_enabled": false,
+  "tts_voice": "default"
+}

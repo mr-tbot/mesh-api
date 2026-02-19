@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "urls": [],
+  "send_emergency": true,
+  "send_ai": false,
+  "send_all": false,
+  "inbound_channel_index": null,
+  "title_prefix": "[MESH-API]"
+}

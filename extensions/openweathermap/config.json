@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "api_key": "",
+  "default_lat": "",
+  "default_lon": "",
+  "default_city": "",
+  "units": "imperial",
+  "broadcast_channel_index": 0,
+  "auto_broadcast": false,
+  "broadcast_interval_seconds": 3600,
+  "alert_broadcast": true,
+  "alert_poll_interval_seconds": 600
+}

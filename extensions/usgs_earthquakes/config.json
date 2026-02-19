@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "min_magnitude": 4.0,
+  "max_radius_km": 500,
+  "center_lat": "",
+  "center_lon": "",
+  "poll_interval_seconds": 300,
+  "auto_broadcast": true,
+  "broadcast_channel_index": 0,
+  "lookback_minutes": 60,
+  "include_tsunami_warning": true,
+  "max_results": 10
+}

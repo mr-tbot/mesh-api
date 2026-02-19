@@ -1,0 +1,12 @@
+{
+  "enabled": false,
+  "signal_cli_rest_url": "http://localhost:8080",
+  "sender_number": "",
+  "recipient": "",
+  "send_emergency": false,
+  "send_ai": false,
+  "send_all": false,
+  "receive_enabled": true,
+  "inbound_channel_index": null,
+  "poll_interval_seconds": 5
+}

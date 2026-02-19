@@ -1,0 +1,15 @@
+{
+  "enabled": false,
+  "imap_server": "",
+  "imap_port": 993,
+  "imap_username": "",
+  "imap_password": "",
+  "use_ssl": true,
+  "mailbox": "INBOX",
+  "subject_filter": "",
+  "sender_filter": "",
+  "mark_as_read": true,
+  "inbound_channel_index": null,
+  "poll_interval_seconds": 60,
+  "max_body_length": 200
+}

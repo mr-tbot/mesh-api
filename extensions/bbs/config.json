@@ -1,0 +1,15 @@
+{
+  "enabled": false,
+  "db_filename": "bbs.db",
+  "board_name": "MESH-BBS",
+  "motd": "Welcome to the Mesh BBS! Use /bbs help for commands.",
+  "max_messages_per_board": 500,
+  "max_message_length": 500,
+  "max_boards": 20,
+  "default_boards": ["general", "emergency", "trading", "tech"],
+  "allow_private_messages": true,
+  "message_retention_days": 90,
+  "broadcast_channel_index": 0,
+  "announce_new_posts": true,
+  "require_shortname": true
+}

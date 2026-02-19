@@ -1,0 +1,11 @@
+{
+  "enabled": false,
+  "poll_interval_seconds": 300,
+  "auto_broadcast": true,
+  "broadcast_channel_index": 0,
+  "states": [],
+  "include_silver": true,
+  "include_blue": true,
+  "rss_url": "https://alerts.naad-adna.pelmorex.com/",
+  "max_alerts": 10
+}

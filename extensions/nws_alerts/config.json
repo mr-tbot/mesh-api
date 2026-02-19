@@ -1,0 +1,15 @@
+{
+  "enabled": false,
+  "zone_ids": [],
+  "point": "",
+  "state": "",
+  "poll_interval_seconds": 300,
+  "auto_broadcast": true,
+  "broadcast_channel_index": 0,
+  "severity_filter": ["Extreme", "Severe"],
+  "urgency_filter": [],
+  "certainty_filter": [],
+  "max_alert_length": 300,
+  "include_instruction": true,
+  "user_agent": "MESH-API Emergency Alert System (mesh-api@example.com)"
+}

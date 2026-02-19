@@ -1,0 +1,12 @@
+{
+  "enabled": false,
+  "homeserver_url": "",
+  "access_token": "",
+  "room_id": "",
+  "send_emergency": false,
+  "send_ai": false,
+  "send_all": false,
+  "receive_enabled": true,
+  "inbound_channel_index": null,
+  "poll_interval_seconds": 5
+}

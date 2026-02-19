@@ -169,7 +169,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API BETA v0.6.0 (PRE-RELEASE 4) by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.6.0 RC1 by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -327,6 +327,31 @@ OLLAMA_TIMEOUT = config.get("ollama_timeout", 60)
 # Optional advanced Ollama settings to improve stability/quality
 OLLAMA_OPTIONS = config.get("ollama_options", {})  # e.g., {"temperature": 0.7}
 OLLAMA_KEEP_ALIVE = config.get("ollama_keep_alive", "10m")  # keep model loaded
+CLAUDE_API_KEY = config.get("claude_api_key", "")
+CLAUDE_MODEL = config.get("claude_model", "claude-sonnet-4-20250514")
+CLAUDE_TIMEOUT = config.get("claude_timeout", 60)
+GEMINI_API_KEY = config.get("gemini_api_key", "")
+GEMINI_MODEL = config.get("gemini_model", "gemini-2.0-flash")
+GEMINI_TIMEOUT = config.get("gemini_timeout", 60)
+GROK_API_KEY = config.get("grok_api_key", "")
+GROK_MODEL = config.get("grok_model", "grok-3")
+GROK_TIMEOUT = config.get("grok_timeout", 60)
+OPENROUTER_API_KEY = config.get("openrouter_api_key", "")
+OPENROUTER_MODEL = config.get("openrouter_model", "openai/gpt-4.1-mini")
+OPENROUTER_TIMEOUT = config.get("openrouter_timeout", 60)
+GROQ_API_KEY = config.get("groq_api_key", "")
+GROQ_MODEL = config.get("groq_model", "llama-3.3-70b-versatile")
+GROQ_TIMEOUT = config.get("groq_timeout", 60)
+DEEPSEEK_API_KEY = config.get("deepseek_api_key", "")
+DEEPSEEK_MODEL = config.get("deepseek_model", "deepseek-chat")
+DEEPSEEK_TIMEOUT = config.get("deepseek_timeout", 60)
+MISTRAL_API_KEY = config.get("mistral_api_key", "")
+MISTRAL_MODEL = config.get("mistral_model", "mistral-small-latest")
+MISTRAL_TIMEOUT = config.get("mistral_timeout", 60)
+OPENAI_COMPAT_API_KEY = config.get("openai_compatible_api_key", "")
+OPENAI_COMPAT_URL = config.get("openai_compatible_url", "")
+OPENAI_COMPAT_MODEL = config.get("openai_compatible_model", "")
+OPENAI_COMPAT_TIMEOUT = config.get("openai_compatible_timeout", 60)
 HOME_ASSISTANT_URL = config.get("home_assistant_url", "")
 HOME_ASSISTANT_TOKEN = config.get("home_assistant_token", "")
 HOME_ASSISTANT_TIMEOUT = config.get("home_assistant_timeout", 30)
@@ -440,6 +465,12 @@ lastDMNode = None
 lastChannelIndex = None
 
 # -----------------------------
+# Extension System Initialisation
+# -----------------------------
+EXTENSIONS_PATH = config.get("extensions_path", "./extensions")
+extension_loader = None  # initialised in main() after helpers are defined
+
+# -----------------------------
 # Location Lookup Function
 # -----------------------------
 def get_node_location(node_id):
@@ -506,6 +537,85 @@ def config_editor_backup():
     mem.seek(0)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return send_file(mem, as_attachment=True, download_name=f"mesh-api-backup-{ts}.zip", mimetype="application/zip")
+  except Exception as e:
+    return jsonify({"message": str(e)}), 500
+
+# --- Extension Management API Endpoints ---
+@app.route("/extensions/status", methods=["GET"])
+def extensions_status():
+  """Return status of all extensions (loaded and available)."""
+  if not extension_loader:
+    return jsonify({"loaded": {}, "available": {}})
+  loaded_info = {}
+  for slug, ext in extension_loader.loaded.items():
+    loaded_info[slug] = {
+      "name": ext.name,
+      "version": ext.version,
+      "enabled": True,
+      "commands": list(ext.commands.keys()),
+    }
+  return jsonify({"loaded": loaded_info, "available": extension_loader.available})
+
+@app.route("/extensions/config/<slug>", methods=["GET"])
+def extensions_config_get(slug):
+  """Return the config.json for a specific extension."""
+  ext_path = os.path.join(os.path.abspath(EXTENSIONS_PATH), slug, "config.json")
+  if not os.path.isfile(ext_path):
+    return jsonify({"message": f"Extension '{slug}' config not found"}), 404
+  try:
+    with open(ext_path, "r", encoding="utf-8") as f:
+      ext_config = json.load(f)
+    return jsonify(ext_config)
+  except Exception as e:
+    return jsonify({"message": str(e)}), 500
+
+@app.route("/extensions/config/<slug>", methods=["PUT", "POST"])
+def extensions_config_save(slug):
+  """Save updated config.json for a specific extension."""
+  # Validate slug to prevent path traversal
+  if "/" in slug or "\\" in slug or ".." in slug:
+    return jsonify({"message": "Invalid extension name"}), 400
+  ext_path = os.path.join(os.path.abspath(EXTENSIONS_PATH), slug, "config.json")
+  if not os.path.isfile(ext_path):
+    return jsonify({"message": f"Extension '{slug}' config not found"}), 404
+  try:
+    data = request.get_json(force=True)
+    if not isinstance(data, dict):
+      return jsonify({"message": "Config must be a JSON object"}), 400
+    _atomic_write_json(ext_path, data)
+    add_script_log(f"[WebUI] Extension '{slug}' config saved.")
+    return jsonify({"status": "ok"})
+  except Exception as e:
+    return jsonify({"message": str(e)}), 500
+
+@app.route("/extensions/toggle/<slug>", methods=["POST"])
+def extensions_toggle(slug):
+  """Toggle an extension's enabled state and return new state."""
+  if "/" in slug or "\\" in slug or ".." in slug:
+    return jsonify({"message": "Invalid extension name"}), 400
+  ext_path = os.path.join(os.path.abspath(EXTENSIONS_PATH), slug, "config.json")
+  if not os.path.isfile(ext_path):
+    return jsonify({"message": f"Extension '{slug}' config not found"}), 404
+  try:
+    with open(ext_path, "r", encoding="utf-8") as f:
+      ext_config = json.load(f)
+    ext_config["enabled"] = not ext_config.get("enabled", False)
+    _atomic_write_json(ext_path, ext_config)
+    new_state = ext_config["enabled"]
+    add_script_log(f"[WebUI] Extension '{slug}' {'enabled' if new_state else 'disabled'}.")
+    return jsonify({"status": "ok", "enabled": new_state, "note": "Restart required for changes to take effect."})
+  except Exception as e:
+    return jsonify({"message": str(e)}), 500
+
+@app.route("/extensions/reload", methods=["POST"])
+def extensions_reload():
+  """Hot-reload all extensions."""
+  if not extension_loader:
+    return jsonify({"message": "Extension system not available"}), 503
+  try:
+    extension_loader.reload()
+    add_script_log("[WebUI] Extensions hot-reloaded.")
+    return jsonify({"status": "ok"})
   except Exception as e:
     return jsonify({"message": str(e)}), 500
 
@@ -850,6 +960,155 @@ def send_to_ollama(user_message):
         time.sleep(0.5 * (attempt + 1))
     return None
 
+def send_to_claude(user_message):
+    dprint(f"send_to_claude: user_message='{user_message}'")
+    info_print("[Info] Routing user message to Claude...")
+    if not CLAUDE_API_KEY:
+        print("⚠️ No Claude API key provided.")
+        return None
+    url = "https://api.anthropic.com/v1/messages"
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": CLAUDE_API_KEY,
+        "anthropic-version": "2023-06-01",
+    }
+    payload = {
+        "model": CLAUDE_MODEL,
+        "max_tokens": MAX_RESPONSE_LENGTH,
+        "system": SYSTEM_PROMPT,
+        "messages": [
+            {"role": "user", "content": user_message}
+        ],
+    }
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=CLAUDE_TIMEOUT)
+        if r.status_code == 200:
+            jr = r.json()
+            dprint(f"Claude raw => {jr}")
+            content_blocks = jr.get("content", [])
+            text_parts = [b.get("text", "") for b in content_blocks if b.get("type") == "text"]
+            content = " ".join(text_parts) if text_parts else "🤖 [No response]"
+            content = sanitize_model_output(content)
+            return content[:MAX_RESPONSE_LENGTH]
+        else:
+            print(f"⚠️ Claude error: {r.status_code} => {r.text}")
+            return None
+    except Exception as e:
+        print(f"⚠️ Claude request failed: {e}")
+        return None
+
+def send_to_gemini(user_message):
+    dprint(f"send_to_gemini: user_message='{user_message}'")
+    info_print("[Info] Routing user message to Gemini...")
+    if not GEMINI_API_KEY:
+        print("⚠️ No Gemini API key provided.")
+        return None
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [
+            {"role": "user", "parts": [{"text": user_message}]}
+        ],
+        "generationConfig": {
+            "maxOutputTokens": MAX_RESPONSE_LENGTH,
+        },
+    }
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=GEMINI_TIMEOUT)
+        if r.status_code == 200:
+            jr = r.json()
+            dprint(f"Gemini raw => {jr}")
+            candidates = jr.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                content = " ".join(p.get("text", "") for p in parts)
+            else:
+                content = "🤖 [No response]"
+            content = sanitize_model_output(content)
+            return content[:MAX_RESPONSE_LENGTH]
+        else:
+            print(f"⚠️ Gemini error: {r.status_code} => {r.text}")
+            return None
+    except Exception as e:
+        print(f"⚠️ Gemini request failed: {e}")
+        return None
+
+# -----------------------------
+# Generic OpenAI-Compatible Helper
+# -----------------------------
+def _send_to_openai_compatible(user_message, provider_name, api_key, base_url, model, timeout):
+    """Shared helper for any provider with an OpenAI-compatible chat/completions API."""
+    dprint(f"send_to_{provider_name}: user_message='{user_message}'")
+    info_print(f"[Info] Routing user message to {provider_name}...")
+    if not api_key:
+        print(f"⚠️ No {provider_name} API key provided.")
+        return None
+    url = base_url.rstrip("/") + "/chat/completions" if "/chat/completions" not in base_url else base_url
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        "max_tokens": MAX_RESPONSE_LENGTH,
+    }
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if r.status_code == 200:
+            jr = r.json()
+            dprint(f"{provider_name} raw => {jr}")
+            content = (
+                jr.get("choices", [{}])[0]
+                  .get("message", {})
+                  .get("content", "🤖 [No response]")
+            )
+            content = sanitize_model_output(content)
+            return content[:MAX_RESPONSE_LENGTH]
+        else:
+            print(f"⚠️ {provider_name} error: {r.status_code} => {r.text}")
+            return None
+    except Exception as e:
+        print(f"⚠️ {provider_name} request failed: {e}")
+        return None
+
+def send_to_grok(user_message):
+    return _send_to_openai_compatible(
+        user_message, "Grok", GROK_API_KEY,
+        "https://api.x.ai/v1/chat/completions", GROK_MODEL, GROK_TIMEOUT)
+
+def send_to_openrouter(user_message):
+    return _send_to_openai_compatible(
+        user_message, "OpenRouter", OPENROUTER_API_KEY,
+        "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_MODEL, OPENROUTER_TIMEOUT)
+
+def send_to_groq(user_message):
+    return _send_to_openai_compatible(
+        user_message, "Groq", GROQ_API_KEY,
+        "https://api.groq.com/openai/v1/chat/completions", GROQ_MODEL, GROQ_TIMEOUT)
+
+def send_to_deepseek(user_message):
+    return _send_to_openai_compatible(
+        user_message, "DeepSeek", DEEPSEEK_API_KEY,
+        "https://api.deepseek.com/v1/chat/completions", DEEPSEEK_MODEL, DEEPSEEK_TIMEOUT)
+
+def send_to_mistral(user_message):
+    return _send_to_openai_compatible(
+        user_message, "Mistral", MISTRAL_API_KEY,
+        "https://api.mistral.ai/v1/chat/completions", MISTRAL_MODEL, MISTRAL_TIMEOUT)
+
+def send_to_openai_compatible(user_message):
+    if not OPENAI_COMPAT_URL:
+        print("⚠️ No openai_compatible_url configured.")
+        return None
+    return _send_to_openai_compatible(
+        user_message, "OpenAI-Compatible", OPENAI_COMPAT_API_KEY,
+        OPENAI_COMPAT_URL, OPENAI_COMPAT_MODEL, OPENAI_COMPAT_TIMEOUT)
+
 def send_to_home_assistant(user_message):
     dprint(f"send_to_home_assistant: user_message='{user_message}'")
     info_print("[Info] Routing user message to Home Assistant...")
@@ -884,7 +1143,28 @@ def get_ai_response(prompt):
         return send_to_openai(prompt)
     elif AI_PROVIDER == "ollama":
         return send_to_ollama(prompt)
+    elif AI_PROVIDER == "claude":
+        return send_to_claude(prompt)
+    elif AI_PROVIDER == "gemini":
+        return send_to_gemini(prompt)
+    elif AI_PROVIDER == "grok":
+        return send_to_grok(prompt)
+    elif AI_PROVIDER == "openrouter":
+        return send_to_openrouter(prompt)
+    elif AI_PROVIDER == "groq":
+        return send_to_groq(prompt)
+    elif AI_PROVIDER == "deepseek":
+        return send_to_deepseek(prompt)
+    elif AI_PROVIDER == "mistral":
+        return send_to_mistral(prompt)
+    elif AI_PROVIDER == "openai_compatible":
+        return send_to_openai_compatible(prompt)
     elif AI_PROVIDER == "home_assistant":
+        # Delegate to the Home Assistant extension if loaded, else fall back to built-in
+        if extension_loader:
+            ha_ext = extension_loader.get_ai_provider("home_assistant")
+            if ha_ext:
+                return ha_ext.get_ai_response(prompt)
         return send_to_home_assistant(prompt)
     else:
         print(f"⚠️ Unknown AI provider: {AI_PROVIDER}")
@@ -965,6 +1245,16 @@ def send_emergency_notification(node_id, user_msg, lat=None, lon=None, position_
     except Exception as e:
         print(f"⚠️ Discord webhook error: {e}")
 
+    # Broadcast emergency to all loaded extensions
+    if extension_loader:
+        gps = None
+        if lat is not None and lon is not None:
+            gps = {"lat": lat, "lon": lon, "time": str(position_time) if position_time else None}
+        try:
+            extension_loader.broadcast_emergency(full_msg, gps)
+        except Exception as e:
+            print(f"⚠️ Extension emergency broadcast error: {e}")
+
 # -----------------------------
 # Helper: Validate/Strip PIN (for Home Assistant)
 # -----------------------------
@@ -1003,6 +1293,18 @@ def route_message_text(user_message, channel_idx):
 def handle_command(cmd, full_text, sender_id):
   cmd = cmd.lower()
   dprint(f"handle_command => cmd='{cmd}', full_text='{full_text}', sender_id={sender_id}")
+  # --- Extension command routing (runs before built-ins) ---
+  if cmd == "/extensions":
+    if extension_loader:
+      return extension_loader.list_extensions()
+    return "Extension system not initialised."
+  if extension_loader:
+    node_info = {"node_id": sender_id, "shortname": get_node_shortname(sender_id)}
+    ext_args = full_text[len(cmd):].strip()
+    ext_result = extension_loader.route_command(cmd, ext_args, node_info)
+    if ext_result is not None:
+      return ext_result
+  # --- Built-in commands ---
   if cmd == ABOUT_COMMAND:
     return "MESH-API Off Grid Chat Bot - By: MR-TBOT.com"
   elif cmd in AI_COMMANDS:
@@ -1041,9 +1343,13 @@ def handle_command(cmd, full_text, sender_id):
       "/ping",
       "/test",
       MOTD_COMMAND,
+      "/extensions",
     ] + AI_COMMANDS + [SMS_COMMAND]
     custom_cmds = [c.get("command") for c in commands_config.get("commands", [])]
-    return "Commands:\n" + ", ".join(built_in + custom_cmds)
+    ext_cmds = []
+    if extension_loader:
+      ext_cmds = [cmd for cmd, _ in extension_loader.list_extension_commands()]
+    return "Commands:\n" + ", ".join(built_in + custom_cmds + ext_cmds)
   elif cmd == MOTD_COMMAND:
     return motd_content
   elif cmd == SMS_COMMAND:
@@ -1197,6 +1503,20 @@ def on_receive(packet=None, interface=None, **kwargs):
     dprint(f"[MSG] from {sender_node} to {raw_to} (ch={ch_idx}): {text}")
     entry = log_message(sender_node, text, direct=(to_node_int != BROADCAST_ADDR), channel_idx=(None if to_node_int != BROADCAST_ADDR else ch_idx))
 
+    # Notify all loaded extensions about the inbound message
+    if extension_loader:
+        try:
+            msg_meta = {
+                "sender_id": sender_node,
+                "sender_info": f"{get_node_shortname(sender_node)} ({sender_node})",
+                "channel_idx": ch_idx,
+                "is_direct": (to_node_int != BROADCAST_ADDR),
+                "via_mqtt": via_mqtt,
+            }
+            extension_loader.broadcast_on_message(text, msg_meta)
+        except Exception as e:
+            dprint(f"Extension on_message error: {e}")
+
     global lastDMNode, lastChannelIndex
     if to_node_int != BROADCAST_ADDR:
       lastDMNode = sender_node
@@ -1249,6 +1569,18 @@ def on_receive(packet=None, interface=None, **kwargs):
       if ENABLE_DISCORD and DISCORD_SEND_AI and DISCORD_INBOUND_CHANNEL_INDEX is not None and ch_idx == DISCORD_INBOUND_CHANNEL_INDEX:
         disc_msg = f"🤖 **{AI_NODE_NAME}**: {ai_out}"
         send_discord_message(disc_msg)
+      # Notify extensions about the AI response
+      if extension_loader:
+        try:
+          ai_meta = {
+            "is_ai_response": True,
+            "channel_idx": ch_idx,
+            "sender_id": sender_node,
+            "is_direct": is_direct,
+          }
+          extension_loader.broadcast_message(ai_out, ai_meta)
+        except Exception as e:
+          dprint(f"Extension send_message error: {e}")
       if is_direct:
         send_direct_chunks(interface, ai_out, sender_node)
       else:
@@ -1885,10 +2217,84 @@ def dashboard():
       themeColor: "#ffa500",
       hueRotateEnabled: false,
       hueRotateSpeed: 10,
+      soundEnabled: true,
+      soundVolume: 0.7,
+      soundType: "builtin",
       soundURL: ""
     };
     let hueRotateInterval = null;
     let currentHue = 0;
+    let seenMessageTimestamps = new Set();
+    let initialLoadDone = false;
+
+    // --- Built-in notification beep using Web Audio API ---
+    let audioCtx = null;
+    function getAudioCtx() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      return audioCtx;
+    }
+    function playBuiltinBeep(volume) {
+      try {
+        const ctx = getAudioCtx();
+        if (ctx.state === 'suspended') ctx.resume();
+        const g = ctx.createGain();
+        g.connect(ctx.destination);
+        g.gain.setValueAtTime(volume * 0.3, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+        // Two-tone notification: 880Hz then 1320Hz
+        const o1 = ctx.createOscillator();
+        o1.type = 'sine';
+        o1.frequency.setValueAtTime(880, ctx.currentTime);
+        o1.connect(g);
+        o1.start(ctx.currentTime);
+        o1.stop(ctx.currentTime + 0.15);
+        const g2 = ctx.createGain();
+        g2.connect(ctx.destination);
+        g2.gain.setValueAtTime(volume * 0.3, ctx.currentTime + 0.15);
+        g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.55);
+        const o2 = ctx.createOscillator();
+        o2.type = 'sine';
+        o2.frequency.setValueAtTime(1320, ctx.currentTime + 0.15);
+        o2.connect(g2);
+        o2.start(ctx.currentTime + 0.15);
+        o2.stop(ctx.currentTime + 0.55);
+      } catch (e) { console.warn('Beep failed:', e); }
+    }
+
+    function playIncomingSound() {
+      if (!uiSettings.soundEnabled) return;
+      const vol = uiSettings.soundVolume || 0.7;
+      if (uiSettings.soundType === 'custom' && uiSettings.soundURL) {
+        let audio = document.getElementById('incomingSound');
+        if (audio && audio.src) {
+          audio.volume = vol;
+          audio.currentTime = 0;
+          audio.play().catch(e => console.warn('Sound play blocked:', e));
+        }
+      } else {
+        playBuiltinBeep(vol);
+      }
+    }
+
+    function checkForNewMessages(messages) {
+      if (!initialLoadDone) {
+        messages.forEach(m => seenMessageTimestamps.add(m.timestamp));
+        initialLoadDone = true;
+        return;
+      }
+      let hasNew = false;
+      messages.forEach(m => {
+        if (!seenMessageTimestamps.has(m.timestamp)) {
+          seenMessageTimestamps.add(m.timestamp);
+          // Only beep for inbound messages, not outgoing
+          if (m.node !== 'WebUI' && m.node !== 'Discord' && m.node !== 'Twilio' &&
+              m.node !== 'DiscordPoll') {
+            hasNew = true;
+          }
+        }
+      });
+      if (hasNew) playIncomingSound();
+    }
 
     function toggleMode(force) {
       if (typeof force !== "undefined") {
@@ -1947,6 +2353,11 @@ def dashboard():
       document.getElementById('hueRotateEnabled').checked = uiSettings.hueRotateEnabled;
       document.getElementById('hueRotateSpeed').value = uiSettings.hueRotateSpeed;
       document.getElementById('soundURL').value = uiSettings.soundURL;
+      document.getElementById('soundEnabled').checked = uiSettings.soundEnabled !== false;
+      document.getElementById('soundVolume').value = uiSettings.soundVolume || 0.7;
+      document.getElementById('soundVolumeVal').textContent = Math.round((uiSettings.soundVolume || 0.7) * 100) + '%';
+      document.getElementById('soundTypeSelect').value = uiSettings.soundType || 'builtin';
+      document.getElementById('customSoundRow').style.display = (uiSettings.soundType === 'custom') ? 'block' : 'none';
 
       // Apply settings on load
       applyThemeColor(uiSettings.themeColor);
@@ -1959,6 +2370,10 @@ def dashboard():
         uiSettings.themeColor = document.getElementById('uiColorPicker').value;
         uiSettings.hueRotateEnabled = document.getElementById('hueRotateEnabled').checked;
         uiSettings.hueRotateSpeed = parseFloat(document.getElementById('hueRotateSpeed').value);
+        // Sound settings
+        uiSettings.soundEnabled = document.getElementById('soundEnabled').checked;
+        uiSettings.soundVolume = parseFloat(document.getElementById('soundVolume').value);
+        uiSettings.soundType = document.getElementById('soundTypeSelect').value;
         // For soundURL, only allow local file path from file input
         var fileInput = document.getElementById('soundFile');
         if (fileInput && fileInput.files.length > 0) {
@@ -2116,6 +2531,141 @@ def dashboard():
       }
     }
 
+    // --- Extensions Modal ---
+    let extensionsData = { loaded: {}, available: {} };
+    let activeExtConfigSlug = null;
+
+    function openExtensionsModal() {
+      document.getElementById('extensionsModal').style.display = 'flex';
+      loadExtensionsStatus();
+    }
+    function closeExtensionsModal() {
+      document.getElementById('extensionsModal').style.display = 'none';
+      activeExtConfigSlug = null;
+    }
+    async function loadExtensionsStatus() {
+      try {
+        const r = await fetch('/extensions/status');
+        extensionsData = await r.json();
+        renderExtensionsList();
+      } catch (e) { console.error('Failed to load extensions:', e); }
+    }
+    function renderExtensionsList() {
+      const container = document.getElementById('extensionsListBody');
+      container.innerHTML = '';
+      const allSlugs = Object.keys(extensionsData.available || {});
+      if (allSlugs.length === 0) {
+        container.innerHTML = '<div style="color:#ccc;padding:10px;">No extensions found.</div>';
+        return;
+      }
+      allSlugs.sort().forEach(slug => {
+        const info = extensionsData.available[slug];
+        const isLoaded = slug in (extensionsData.loaded || {});
+        const row = document.createElement('div');
+        row.className = 'ext-row';
+        row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:8px 10px; border-bottom:1px solid #333; flex-wrap:wrap;';
+
+        const statusDot = document.createElement('span');
+        statusDot.style.cssText = 'width:12px; height:12px; border-radius:50%; display:inline-block; flex-shrink:0;';
+        statusDot.style.background = isLoaded ? '#0f0' : (info.enabled ? '#ff0' : '#666');
+        statusDot.title = isLoaded ? 'Active' : (info.enabled ? 'Enabled (not loaded)' : 'Disabled');
+        row.appendChild(statusDot);
+
+        const nameSpan = document.createElement('span');
+        nameSpan.style.cssText = 'font-weight:bold; color:var(--theme-color); min-width:120px;';
+        nameSpan.textContent = info.name + ' v' + info.version;
+        row.appendChild(nameSpan);
+
+        const statusLabel = document.createElement('span');
+        statusLabel.style.cssText = 'font-size:0.85em; color:#aaa; min-width:80px;';
+        statusLabel.textContent = isLoaded ? 'Active' : (info.enabled ? 'Enabled' : 'Disabled');
+        row.appendChild(statusLabel);
+
+        if (info.commands && info.commands.length > 0) {
+          const cmds = document.createElement('span');
+          cmds.style.cssText = 'font-size:0.85em; color:#0ff;';
+          cmds.textContent = info.commands.join(', ');
+          row.appendChild(cmds);
+        }
+
+        const btnGroup = document.createElement('span');
+        btnGroup.style.cssText = 'margin-left:auto; display:flex; gap:6px;';
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'reply-btn';
+        toggleBtn.textContent = info.enabled ? 'Disable' : 'Enable';
+        toggleBtn.style.fontSize = '0.85em';
+        toggleBtn.onclick = async () => {
+          try {
+            const r = await fetch('/extensions/toggle/' + slug, { method:'POST' });
+            const j = await r.json();
+            if (r.ok) { loadExtensionsStatus(); }
+            else { alert(j.message || 'Toggle failed'); }
+          } catch (e) { alert('Error: ' + e.message); }
+        };
+        btnGroup.appendChild(toggleBtn);
+
+        const cfgBtn = document.createElement('button');
+        cfgBtn.className = 'reply-btn';
+        cfgBtn.textContent = 'Config';
+        cfgBtn.style.fontSize = '0.85em';
+        cfgBtn.onclick = () => openExtensionConfig(slug, info.name);
+        btnGroup.appendChild(cfgBtn);
+
+        row.appendChild(btnGroup);
+        container.appendChild(row);
+      });
+    }
+
+    async function openExtensionConfig(slug, name) {
+      activeExtConfigSlug = slug;
+      document.getElementById('extConfigTitle').textContent = name + ' Configuration';
+      document.getElementById('extConfigSlug').textContent = slug;
+      document.getElementById('extConfigPanel').style.display = 'block';
+      document.getElementById('extConfigEditor').value = 'Loading...';
+      try {
+        const r = await fetch('/extensions/config/' + slug);
+        if (!r.ok) throw new Error('Failed to load config');
+        const data = await r.json();
+        document.getElementById('extConfigEditor').value = JSON.stringify(data, null, 2);
+      } catch (e) {
+        document.getElementById('extConfigEditor').value = '// Error loading config: ' + e.message;
+      }
+    }
+    async function saveExtensionConfig() {
+      if (!activeExtConfigSlug) return;
+      const text = document.getElementById('extConfigEditor').value;
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        alert('Invalid JSON: ' + e.message);
+        return;
+      }
+      try {
+        const r = await fetch('/extensions/config/' + activeExtConfigSlug, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed)
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.message || 'Save failed');
+        alert('Config saved. Changes may require a reload or restart.');
+        document.getElementById('extConfigEditor').value = JSON.stringify(parsed, null, 2);
+        loadExtensionsStatus();
+      } catch (e) { alert('Error saving: ' + e.message); }
+    }
+    async function reloadExtensions() {
+      if (!confirm('Hot-reload all extensions? Active connections may be briefly interrupted.')) return;
+      try {
+        const r = await fetch('/extensions/reload', { method:'POST' });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.message || 'Reload failed');
+        alert('Extensions reloaded successfully.');
+        loadExtensionsStatus();
+      } catch (e) { alert('Reload failed: ' + e.message); }
+    }
+
     // Data fetch & UI updates
     const CHANNEL_NAMES = """ + json.dumps(channel_names) + """;
 
@@ -2149,6 +2699,7 @@ def dashboard():
         allMessages = msgs;
         let nodes = await (await fetch("/nodes")).json();
         allNodes = nodes;
+        checkForNewMessages(msgs);
         updateMessagesUI(msgs);
         updateNodesUI(nodes, false);
         updateNodesUI(nodes, true);
@@ -2812,6 +3363,7 @@ def dashboard():
     <div class="masthead-actions">
       <span class="suffix-chip" title="Current AI alias and suffix">""" + f"{AI_ALIAS_CANONICAL} (suffix: {AI_SUFFIX})" + """</span>
       <button type="button" onclick="openCommandsModal()">Commands</button>
+      <button type="button" onclick="openExtensionsModal()">Extensions</button>
       <button type="button" onclick="openConfigModal()">Config</button>
       <a href="/logs" target="_blank">Logs</a>
     </div>
@@ -2911,7 +3463,7 @@ def dashboard():
     <h2>Discord Messages</h2>
     <div id="discordMessagesDiv"></div>
   </div>
-  <div class="footer-right-link"><a class="btnlink" href="https://mesh-api.dev" target="_blank">MESH-API v0.6.0 PR4\nby: MR-TBOT</a></div>
+  <div class="footer-right-link"><a class="btnlink" href="https://mesh-api.dev" target="_blank">MESH-API v0.6.0 RC1\nby: MR-TBOT</a></div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
     <div class="modal-content">
@@ -2942,7 +3494,8 @@ def dashboard():
           <button class="mark-read-btn" onclick="restartMeshAI()" title="Applies settings that require restart">Restart Service</button>
         </div>
         <div style="background:#1a1a1a; border:1px solid var(--theme-color); padding:10px; border-radius:8px; margin-bottom:10px; color:#ccc;">
-          <strong>Note:</strong> Changes to providers, connectivity (Wi‑Fi/Serial/Mesh), or Discord/Twilio credentials usually require a restart. Use the <em>Restart</em> button above after saving.
+          <strong>Note:</strong> Changes to providers, connectivity (Wi&#x2011;Fi/Serial/Mesh), or Twilio credentials usually require a restart. Use the <em>Restart</em> button above after saving.
+          <br><strong>Extensions</strong> (Discord, Telegram, Slack, MQTT, etc.) are now configured via the <em>Extensions</em> button in the top bar.
         </div>
         <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
           <button class="reply-btn" onclick="showConfigTab('cfg')">config.json</button>
@@ -2955,17 +3508,24 @@ def dashboard():
             <details open>
               <summary style="color:#ffa500; cursor:pointer;">config.json options help</summary>
               <ul>
-                <li><code>ai_provider</code>: lmstudio | openai | ollama — selects the AI backend.</li>
+                <li><code>ai_provider</code>: lmstudio | openai | ollama | claude | gemini | grok | openrouter | groq | deepseek | mistral | openai_compatible — selects the AI backend.</li>
                 <li><code>system_prompt</code>: System role text sent to the AI.</li>
                 <li><code>lmstudio_url</code>, <code>lmstudio_chat_model</code>, <code>lmstudio_timeout</code>: LM Studio settings.</li>
                 <li><code>openai_api_key</code>, <code>openai_model</code>, <code>openai_timeout</code>: OpenAI settings.</li>
                 <li><code>ollama_url</code>, <code>ollama_model</code>, <code>ollama_timeout</code>, <code>ollama_keep_alive</code>, <code>ollama_options</code>: Ollama settings.</li>
+                <li><code>claude_api_key</code>, <code>claude_model</code>, <code>claude_timeout</code>: Claude (Anthropic) settings.</li>
+                <li><code>gemini_api_key</code>, <code>gemini_model</code>, <code>gemini_timeout</code>: Gemini (Google) settings.</li>
+                <li><code>grok_api_key</code>, <code>grok_model</code>, <code>grok_timeout</code>: Grok (xAI) settings.</li>
+                <li><code>openrouter_api_key</code>, <code>openrouter_model</code>, <code>openrouter_timeout</code>: OpenRouter settings (model format: <code>provider/model</code>).</li>
+                <li><code>groq_api_key</code>, <code>groq_model</code>, <code>groq_timeout</code>: Groq settings.</li>
+                <li><code>deepseek_api_key</code>, <code>deepseek_model</code>, <code>deepseek_timeout</code>: DeepSeek settings.</li>
+                <li><code>mistral_api_key</code>, <code>mistral_model</code>, <code>mistral_timeout</code>: Mistral AI settings.</li>
+                <li><code>openai_compatible_url</code>, <code>openai_compatible_api_key</code>, <code>openai_compatible_model</code>, <code>openai_compatible_timeout</code>: Any OpenAI-compatible API.</li>
                 <li><code>reply_in_channels</code>, <code>reply_in_directs</code>, <code>ai_respond_on_longfast</code>: Reply policy.</li>
                 <li><code>chunk_size</code> and <code>max_ai_chunks</code>: Max characters per chunk and number of chunks sent.</li>
                 <li><code>use_wifi</code>, <code>wifi_host</code>/<code>wifi_port</code>; <code>serial_port</code>/<code>serial_baud</code>; <code>use_mesh_interface</code>: Connectivity modes.</li>
-                <li><code>home_assistant_*</code>: Enable and secure Home Assistant routing on a dedicated channel.</li>
-                <li><code>enable_discord</code>, <code>discord_webhook_url</code>, <code>discord_*</code>: Send/receive via Discord.</li>
                 <li><code>enable_twilio</code> and <code>enable_smtp</code>: Emergency SMS/Email alerts.</li>
+                <li style="color:#ffa500;">Extensions (Discord, Telegram, Slack, MQTT, Home Assistant, etc.) each have their own <code>config.json</code> under <code>extensions/&lt;name&gt;/</code>. Use the <strong>Extensions</strong> button to manage them.</li>
               </ul>
             </details>
           </div>
@@ -2982,6 +3542,43 @@ def dashboard():
       </div>
     </div>
   </div>
+  <div id="extensionsModal" class="modal-overlay" onclick="if(event.target===this) closeExtensionsModal()">
+    <div class="modal-content" style="max-width:1100px;">
+      <div class="modal-header">
+        <h3>Extensions Manager</h3>
+        <button class="modal-close" onclick="closeExtensionsModal()">Close</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom:10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <button class="reply-btn" onclick="loadExtensionsStatus()">Refresh</button>
+          <button class="mark-read-btn" onclick="reloadExtensions()">Hot-Reload Extensions</button>
+          <span style="color:#888; font-size:0.9em;">Enable/disable changes require a reload or restart.</span>
+        </div>
+        <div style="margin-bottom:12px; border:1px solid var(--theme-color); border-radius:8px; overflow:hidden;">
+          <div style="background:#222; padding:8px 12px; border-bottom:1px solid var(--theme-color); display:flex; gap:20px; font-weight:bold; color:var(--theme-color); font-size:0.9em;">
+            <span style="width:14px;"></span>
+            <span style="min-width:180px;">Extension</span>
+            <span style="min-width:80px;">Status</span>
+            <span style="flex:1;">Commands</span>
+            <span>Actions</span>
+          </div>
+          <div id="extensionsListBody" style="max-height:35vh; overflow:auto;"></div>
+        </div>
+        <div id="extConfigPanel" style="display:none; border:1px solid var(--theme-color); border-radius:8px; padding:12px; background:#0a0a0a;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+            <h4 id="extConfigTitle" style="margin:0; color:var(--theme-color);">Extension Config</h4>
+            <span style="color:#888; font-size:0.85em;" id="extConfigSlug"></span>
+          </div>
+          <textarea id="extConfigEditor" style="width:100%; height:30vh; background:#000; color:#0f0; border:1px solid var(--theme-color); font-family:monospace; font-size:0.95em;"></textarea>
+          <div style="margin-top:8px; display:flex; gap:10px;">
+            <button class="mark-read-btn" onclick="saveExtensionConfig()">Save Config</button>
+            <button class="reply-btn" onclick="document.getElementById('extConfigPanel').style.display='none'; activeExtConfigSlug=null;">Close Editor</button>
+          </div>
+          <div style="margin-top:6px; color:#888; font-size:0.85em;">Changes are saved to disk. A reload or restart is needed for most settings to take effect.</div>
+        </div>
+      </div>
+    </div>
+  </div>
   <div class="settings-panel" id="settingsPanel">
     <h2>UI Settings</h2>
     <label for="uiColorPicker">Theme Color:</label>
@@ -2990,9 +3587,22 @@ def dashboard():
     <input type="checkbox" id="hueRotateEnabled"><br><br>
     <label for="hueRotateSpeed">Hue Rotation Speed:</label>
     <input type="range" id="hueRotateSpeed" min="5" max="60" step="0.1" value="10"><br><br>
-    <label for="soundFile">Incoming Message Sound (local file):</label>
-    <input type="file" id="soundFile" accept="audio/*"><br>
-    <input type="text" id="soundURL" placeholder="No file selected" readonly style="background:#222;color:#fff;border:none;"><br><br>
+    <label for="soundEnabled">Enable Notification Sound:</label>
+    <input type="checkbox" id="soundEnabled" checked><br><br>
+    <label for="soundVolume">Volume:</label>
+    <input type="range" id="soundVolume" min="0" max="1" step="0.05" value="0.7" oninput="document.getElementById('soundVolumeVal').textContent=Math.round(this.value*100)+'%'">
+    <span id="soundVolumeVal">70%</span><br><br>
+    <label for="soundTypeSelect">Sound Type:</label>
+    <select id="soundTypeSelect" onchange="document.getElementById('customSoundRow').style.display = this.value==='custom'?'block':'none';">
+      <option value="builtin">Built-in Beep</option>
+      <option value="custom">Custom Sound File</option>
+    </select><br><br>
+    <button type="button" class="reply-btn" onclick="playIncomingSound()" style="margin-bottom:10px;">Test Sound</button><br>
+    <div id="customSoundRow" style="display:none;">
+      <label for="soundFile">Sound File:</label>
+      <input type="file" id="soundFile" accept="audio/*"><br>
+      <input type="text" id="soundURL" placeholder="No file selected" readonly style="background:#222;color:#fff;border:none;"><br><br>
+    </div>
     <label for="timezoneSelect">Timezone Offset (hours):</label>
     <select id="timezoneSelect">
 """
@@ -3219,6 +3829,36 @@ def main():
             print("SMTP is not properly configured for emergency email alerts.")
     else:
         print("SMTP is disabled.")
+    # -----------------------------
+    # Extension System Startup
+    # -----------------------------
+    global extension_loader
+    try:
+        from extensions.loader import ExtensionLoader
+        app_context = {
+            "interface": interface,
+            "flask_app": app,
+            "send_broadcast_chunks": send_broadcast_chunks,
+            "send_direct_chunks": send_direct_chunks,
+            "add_script_log": add_script_log,
+            "get_node_shortname": get_node_shortname,
+            "get_node_fullname": get_node_fullname,
+            "get_node_location": get_node_location,
+            "config": config,
+            "sanitize_model_output": sanitize_model_output,
+            "log_message": log_message,
+            "add_ai_prefix": add_ai_prefix,
+            "MAX_RESPONSE_LENGTH": MAX_RESPONSE_LENGTH,
+            "MAX_CHUNK_SIZE": MAX_CHUNK_SIZE,
+            "SYSTEM_PROMPT": SYSTEM_PROMPT,
+            "AI_NODE_NAME": AI_NODE_NAME,
+            "server_start_time": server_start_time,
+        }
+        extension_loader = ExtensionLoader(EXTENSIONS_PATH, app_context)
+        extension_loader.load_all()
+    except Exception as e:
+        print(f"⚠️ Extension system failed to initialise: {e}")
+        extension_loader = None
     print("Launching Flask in the background on port 5000...")
     api_thread = threading.Thread(
         target=app.run,

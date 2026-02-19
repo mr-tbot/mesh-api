@@ -1,0 +1,18 @@
+{
+  "enabled": false,
+  "broker_host": "localhost",
+  "broker_port": 1883,
+  "username": "",
+  "password": "",
+  "use_tls": false,
+  "client_id": "mesh-api",
+  "publish_topic": "mesh/outbound",
+  "subscribe_topic": "mesh/inbound",
+  "emergency_topic": "mesh/emergency",
+  "send_emergency": false,
+  "send_ai": false,
+  "send_all": false,
+  "receive_enabled": true,
+  "inbound_channel_index": null,
+  "qos": 1
+}

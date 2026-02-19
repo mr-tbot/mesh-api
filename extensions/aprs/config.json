@@ -1,0 +1,19 @@
+{
+  "enabled": false,
+  "callsign": "",
+  "passcode": "",
+  "aprs_is_server": "rotate.aprs2.net",
+  "aprs_is_port": 14580,
+  "aprs_fi_api_key": "",
+  "filter_range_km": 100,
+  "filter_lat": "",
+  "filter_lon": "",
+  "poll_interval_seconds": 60,
+  "auto_broadcast_positions": false,
+  "broadcast_channel_index": 0,
+  "send_position_to_aprs": false,
+  "position_comment": "MESH-API Node",
+  "symbol_table": "/",
+  "symbol_code": "-",
+  "message_ssid": "-5"
+}

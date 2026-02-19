@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "outbound_url": "",
+  "outbound_method": "POST",
+  "outbound_headers": {},
+  "outbound_template": "{\"text\": \"{{message}}\", \"source\": \"mesh-api\"}",
+  "send_emergency": false,
+  "send_ai": false,
+  "send_all": false,
+  "receive_enabled": true,
+  "receive_endpoint": "/webhook/mesh",
+  "receive_secret": "",
+  "inbound_channel_index": null,
+  "message_field": "message",
+  "sender_field": "sender"
+}

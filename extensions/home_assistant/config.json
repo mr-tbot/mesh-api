@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "url": "http://homeassistant.local:8123/api/conversation/process",
+  "token": "",
+  "timeout": 90,
+  "channel_index": 1,
+  "enable_pin": false,
+  "secure_pin": "1234"
+}
