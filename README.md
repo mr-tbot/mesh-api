@@ -1,8 +1,8 @@
-# MESH-API (BETA v0.6.0 - PRE-RELEASE 3) - Formerly Known as MESH-AI - Renamed based on future planned upgrades coming soon!  (MeshCore routing support coming soon as well!)
+# MESH-API v0.6.0 RC1 - Almost Ready for Full Release & Docker Images!
 
-- some updated features and packages may introduce unforeseen bugs - PLEASE REPORT ANY ISSUES ASAP BEFORE FULL PACKAGE RELEASE AND DOCKER IMAGE UPDATES.
+- **v0.6.0 RC1** — Release Candidate 1! Plugin-based extensions system with 25+ built-in extensions, 12 AI providers, drop-in plugin architecture, and a fully revamped WebUI with Extensions Manager and improved notification sounds. Docker images are coming with the full release!
 
-- PLEASE NOTE - There are new requirements and new config options - v0.6.0 PR3 AGAIN updates many required library versions - and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
+- PLEASE NOTE - There are new requirements and new config options - v0.6.0 updates many required library versions and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
 
 - Having issues getting up and running?  As of v0.6.0 I have created a custom GPT with Open-AI to assist anyone having problems - give it a try! - https://chatgpt.com/g/g-68d86345f4c4819183c417b3790499c7-mesh-api-setup-assistant
 
@@ -13,7 +13,7 @@
 
 
 
-**MESH-API** is an experimental project that bridges [Meshtastic](https://meshtastic.org/) LoRa mesh networks with powerful AI chatbots and 3rd party APIs. This is the SECOND BETA RELEASE!
+**MESH-API** is an experimental project that bridges [Meshtastic](https://meshtastic.org/) LoRa mesh networks with powerful AI chatbots and 3rd party APIs.
 
 ## What Sets MESH-API Apart?
 
@@ -36,8 +36,8 @@ In short, MESH-API bridges the gap between **mesh services** and **online/locall
 > **Disclaimer:**  
 > This project is **NOT ASSOCIATED** with the official Meshtastic Project. It is provided solely as an extension to add AI and advanced features to your Mesh network.  
 
-> **BETA Software Warning:**  
-> This version is still in BETA. It may be unstable or incomplete. Please avoid relying on it for mission‑critical tasks or emergencies. Always have backup communication methods available and use responsibly.  
+> **Release Candidate Warning:**  
+> This version (v0.6.0 RC1) is a release candidate — nearly feature-complete and approaching the full release. While significantly more stable than earlier pre-releases, some features may still have rough edges. Please avoid relying on it for mission‑critical tasks or emergencies. Always have backup communication methods available and use responsibly.  
 
 >  
 > *I am one robot using other robots to write this code. Some features are still untested in the field. Check the GitHub issues for fixes or feedback!*
@@ -51,8 +51,14 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 
 ## Features
 
+- **Plugin-Based Extensions System** *(New in v0.6.0)*  
+  - 25+ built-in extensions across 5 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, and Smart Home.
+  - Drop-in plugin architecture — add or remove extensions by copying a folder. No core code changes required.
+  - Extensions can register slash commands, react to emergencies, observe messages, expose HTTP endpoints, and run background services.
+  - **WebUI Extensions Manager** — view, enable/disable, and configure extensions from the dashboard.
+  - See the [Extensions Reference](#extensions-reference) section below for full details on all built-in extensions, or [Developing Custom Extensions](#developing-custom-extensions) to build your own.
 - **Multiple AI Providers**  
-  - Support for **Local** models (LM Studio, Ollama), **OpenAI**, and even **Home Assistant** integration.
+  - Support for **Local** models (LM Studio, Ollama), **OpenAI**, **Claude**, **Gemini**, **Grok**, **OpenRouter**, **Groq**, **DeepSeek**, **Mistral**, generic OpenAI-compatible endpoints, and **Home Assistant** integration.
 - **Home Assistant Integration**  
   - Seamlessly forward messages from a designated channel to Home Assistant’s conversation API. Optionally secure the integration using a PIN.
 - **Advanced Slash Commands**  
@@ -66,9 +72,10 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 - **Enhanced REST API & WebUI Dashboard**  
   - A modern three‑column layout showing direct messages, channel messages, and available nodes. Stacks on mobile; 3‑wide on desktop. Controls (Suffix, Commands, Config, Logs) live in the “Send a Message” header (top‑right).
   - Additional endpoints include `/messages`, `/nodes`, `/connection_status`, `/logs`, `/logs_stream`, `/send`, `/ui_send`, `/commands_info` (JSON commands list), and a new `/discord_webhook` for inbound Discord messages.
-  - UI customization through settings such as theme color, hue rotation, and custom sounds.
+  - UI customization through settings such as theme color, hue rotation, notification sounds (built-in beep or custom file), and volume control.
   - Config Editor (WebUI): Click the “Config” button in the header to view/edit `config.json`, `commands_config.json`, and `motd.json` in a tabbed editor. JSON is validated before saving; writes are atomic. Some changes may require a restart to take effect.
   - Emoji enhancements: each message has a React button that reveals a compact, hidden emoji picker; choosing an emoji auto‑sends a reaction (DM or channel). The send form includes a Quick Emoji bar that inserts emojis into your draft (does not auto‑send).
+  - Extensions Manager (WebUI): Click the "Extensions" button to view extension status, enable/disable extensions, edit extension configs, and hot-reload all extensions — all from the browser.
 - **Improved Message Chunking & Routing**  
   - Automatically splits long AI responses into configurable chunks with delays to reduce radio congestion.
   - Configurable flags control whether the bot replies to broadcast channels and/or direct messages.
@@ -100,20 +107,1301 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 
 ---
 
-## Upcoming Features in v0.6.0 PR4
+## Extensions Reference
+
+> **Note:** The extensions system and all corresponding extensions are **new and largely untested**. Please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues) so they may be investigated and addressed.
+
+Complete reference for all built-in extensions included with MESH-API.  
+Each extension is a self-contained plugin in the `extensions/` directory with its own `config.json`, `extension.py`, and `__init__.py`.
+
+**Quick start:** Enable any extension by setting `"enabled": true` in its `config.json` file and restarting MESH-API.
+
+---
+
+### Extensions Table of Contents
+
+- **[Communication Extensions](#communication-extensions):** [Discord](#discord) · [Slack](#slack) · [Telegram](#telegram) · [Matrix](#matrix) · [Signal](#signal) · [Mattermost](#mattermost) · [Zello](#zello) · [MQTT (Extension)](#mqtt-extension) · [Webhook Generic](#webhook-generic) · [IMAP](#imap) · [Mastodon](#mastodon)
+- **[Notification Extensions](#notification-extensions):** [Apprise](#apprise) · [Ntfy](#ntfy) · [Pushover](#pushover) · [PagerDuty](#pagerduty) · [OpsGenie](#opsgenie)
+- **[Emergency & Weather Extensions](#emergency--weather-extensions):** [NWS Alerts](#nws-alerts) · [OpenWeatherMap](#openweathermap) · [USGS Earthquakes](#usgs-earthquakes) · [GDACS](#gdacs) · [Amber Alerts](#amber-alerts)
+- **[Ham Radio & Off-Grid Extensions](#ham-radio--off-grid-extensions):** [Winlink](#winlink) · [APRS](#aprs) · [BBS](#bbs)
+- **[Smart Home Extensions](#smart-home-extensions):** [Home Assistant (Extension)](#home-assistant-extension)
+
+---
+
+### Communication Extensions
+
+#### Discord
+
+Bidirectional bridge between Meshtastic mesh and a Discord channel.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/discord` | Show Discord integration status |
+
+**Config (`extensions/discord/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `webhook_url` | string | `""` | Discord webhook URL for outbound messages |
+| `bot_token` | string | `""` | Bot token for reading Discord messages |
+| `channel_id` | string | `""` | Discord channel ID to bridge |
+| `poll_interval_seconds` | int | `5` | How often to poll for new Discord messages |
+| `forward_to_mesh` | bool | `true` | Forward Discord messages to mesh |
+| `mesh_channel_index` | int | `0` | Mesh channel to bridge |
+| `bot_name` | string | `"MESH-API"` | Display name for webhook posts |
+
+**Hooks:** `on_message` (forwards mesh→Discord), `on_emergency` (posts alerts), Flask route `/discord_webhook`.
+
+---
+
+#### Slack
+
+Bidirectional Slack integration using Bot API and incoming webhooks.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/slack` | Show Slack integration status |
+
+**Config (`extensions/slack/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `bot_token` | string | `""` | Slack Bot User OAuth Token (`xoxb-...`) |
+| `webhook_url` | string | `""` | Incoming webhook URL for outbound messages |
+| `channel_id` | string | `""` | Slack channel ID to bridge |
+| `poll_interval_seconds` | int | `10` | Polling interval for new messages |
+| `forward_to_mesh` | bool | `true` | Forward Slack messages to mesh |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `bot_name` | string | `"MESH-API"` | Bot display name |
+
+**Hooks:** `on_message`, `on_emergency`.
+
+---
+
+#### Telegram
+
+Bidirectional Telegram bot bridge using the Bot API with `getUpdates` long-polling.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/telegram` | Show Telegram bot status |
+
+**Config (`extensions/telegram/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `bot_token` | string | `""` | Telegram Bot API token from @BotFather |
+| `chat_id` | string | `""` | Target chat/group/channel ID |
+| `poll_interval_seconds` | int | `5` | Polling interval |
+| `forward_to_mesh` | bool | `true` | Forward Telegram→mesh |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `parse_mode` | string | `"HTML"` | Telegram parse mode |
+
+**Hooks:** `on_message`, `on_emergency`.
+
+---
+
+#### Matrix
+
+Bidirectional Matrix (Element) bridge using the Client-Server API.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/matrix` | Show Matrix connection status |
+
+**Config (`extensions/matrix/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `homeserver_url` | string | `""` | Matrix homeserver (e.g. `https://matrix.org`) |
+| `access_token` | string | `""` | Matrix access token |
+| `room_id` | string | `""` | Room ID to bridge (`!abc:matrix.org`) |
+| `user_id` | string | `""` | Bot user ID (`@bot:matrix.org`) |
+| `poll_interval_seconds` | int | `5` | Sync polling interval |
+| `forward_to_mesh` | bool | `true` | Forward Matrix→mesh |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+
+**Hooks:** `on_message`, `on_emergency`.
+
+---
+
+#### Signal
+
+Bidirectional Signal bridge using the signal-cli-rest-api.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/signal` | Show Signal integration status |
+
+**Config (`extensions/signal/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `signal_api_url` | string | `"http://localhost:8080"` | signal-cli REST API URL |
+| `phone_number` | string | `""` | Registered Signal phone number |
+| `recipient` | string | `""` | Recipient number or group ID |
+| `poll_interval_seconds` | int | `5` | Polling interval |
+| `forward_to_mesh` | bool | `true` | Forward Signal→mesh |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+
+**Hooks:** `on_message`, `on_emergency`.
+
+---
+
+#### Mattermost
+
+Bidirectional Mattermost bridge using REST API + incoming webhook.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/mattermost` | Show Mattermost integration status |
+
+**Config (`extensions/mattermost/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `server_url` | string | `""` | Mattermost server URL |
+| `access_token` | string | `""` | Personal access token or bot token |
+| `channel_id` | string | `""` | Channel ID to bridge |
+| `webhook_url` | string | `""` | Incoming webhook URL |
+| `poll_interval_seconds` | int | `10` | Polling interval |
+| `forward_to_mesh` | bool | `true` | Forward Mattermost→mesh |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `bot_name` | string | `"MESH-API"` | Bot display name |
+
+**Hooks:** `on_message`, `on_emergency`.
+
+---
+
+#### Zello
+
+Outbound message forwarding to Zello Work PTT channels.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/zello` | Show Zello status |
+
+**Config (`extensions/zello/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `api_url` | string | `""` | Zello Work API URL |
+| `api_token` | string | `""` | Zello API token |
+| `channel_name` | string | `""` | Target Zello channel |
+| `forward_mesh_messages` | bool | `true` | Forward mesh→Zello |
+
+**Hooks:** `on_message`, `on_emergency`.
+
+---
+
+#### MQTT (Extension)
+
+Bidirectional MQTT messaging with JSON payloads and optional TLS.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/mqtt` | Show MQTT broker status |
+
+**Config (`extensions/mqtt/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `broker_host` | string | `"localhost"` | MQTT broker hostname |
+| `broker_port` | int | `1883` | MQTT broker port |
+| `username` | string | `""` | MQTT username |
+| `password` | string | `""` | MQTT password |
+| `topic_publish` | string | `"mesh-api/outbound"` | Publish topic |
+| `topic_subscribe` | string | `"mesh-api/inbound"` | Subscribe topic |
+| `topic_emergency` | string | `"mesh-api/emergency"` | Emergency topic |
+| `use_tls` | bool | `false` | Enable TLS |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `qos` | int | `1` | MQTT QoS level |
+| `client_id` | string | `"mesh-api"` | MQTT client ID |
+
+**Hooks:** `on_message`, `on_emergency`.
+
+---
+
+#### Webhook Generic
+
+Fully configurable bidirectional HTTP webhook with HMAC verification.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/webhook` | Show webhook status |
+
+**Config (`extensions/webhook_generic/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `outbound_url` | string | `""` | URL to POST outbound messages to |
+| `outbound_method` | string | `"POST"` | HTTP method |
+| `outbound_headers` | object | `{}` | Custom headers |
+| `outbound_template` | string | `""` | JSON body template (`{message}`, `{sender}` placeholders) |
+| `hmac_secret` | string | `""` | HMAC-SHA256 secret for inbound verification |
+| `inbound_message_field` | string | `"message"` | JSON field containing the message |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+
+**Hooks:** `on_message`, `on_emergency`. Flask route for inbound webhooks.
+
+---
+
+#### IMAP
+
+Inbound email monitoring with subject/sender filtering.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/imap` | Show IMAP monitoring status |
+
+**Config (`extensions/imap/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `imap_server` | string | `""` | IMAP server hostname |
+| `imap_port` | int | `993` | IMAP port |
+| `username` | string | `""` | Email username |
+| `password` | string | `""` | Email password |
+| `use_ssl` | bool | `true` | Use SSL/TLS |
+| `folder` | string | `"INBOX"` | Mailbox folder |
+| `poll_interval_seconds` | int | `60` | Polling interval |
+| `subject_filter` | string | `""` | Only forward emails matching this subject |
+| `sender_filter` | string | `""` | Only forward emails from this sender |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `max_body_length` | int | `250` | Max message body length |
+| `mark_as_read` | bool | `true` | Mark processed emails as read |
+
+**Hooks:** `on_emergency` (none — inbound only).
+
+---
+
+#### Mastodon
+
+Fediverse / Mastodon bridge for posting toots and reading timeline from the mesh.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/toot <message>` | Post a toot from the mesh |
+| `/fedi status` | Show Mastodon account info |
+| `/fedi timeline [n]` | Show home timeline (last n posts) |
+
+**Config (`extensions/mastodon/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `instance_url` | string | `"https://mastodon.social"` | Mastodon instance URL |
+| `access_token` | string | `""` | Application access token (read+write) |
+| `default_visibility` | string | `"public"` | Post visibility (`public`, `unlisted`, `private`, `direct`) |
+| `post_prefix` | string | `"📡 [Mesh]"` | Prefix for toots |
+| `max_toot_length` | int | `500` | Maximum toot length |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `auto_post_emergency` | bool | `true` | Post emergencies to Mastodon |
+| `poll_mentions` | bool | `false` | Poll for @mentions |
+| `poll_interval_seconds` | int | `120` | Mention polling interval |
+| `forward_mentions_to_mesh` | bool | `true` | Forward mentions to mesh |
+| `hashtags` | array | `["meshtastic", "meshnetwork"]` | Hashtags appended to toots |
+| `content_warning` | string | `""` | Default content warning / spoiler text |
+
+**Hooks:** `on_emergency` (auto-post).
+
+---
+
+### Notification Extensions
+
+#### Apprise
+
+Universal notification gateway supporting 100+ services through URL-based configuration.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/notify <message>` | Send notification via all configured Apprise URLs |
+
+**Config (`extensions/apprise/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `apprise_urls` | array | `[]` | List of Apprise notification URLs |
+| `notify_on_emergency` | bool | `true` | Auto-notify on emergency |
+| `default_title` | string | `"MESH-API"` | Notification title |
+| `default_type` | string | `"info"` | Notification type (`info`, `warning`, `failure`, `success`) |
+
+Apprise URL examples: `slack://token`, `telegram://bot_token/chat_id`, `discord://webhook_id/webhook_token`, etc. See [Apprise docs](https://github.com/caronc/apprise/wiki) for 100+ supported services.
+
+**Hooks:** `on_emergency`.
+
+---
+
+#### Ntfy
+
+Push notifications via [ntfy.sh](https://ntfy.sh) with SSE-based inbound subscription.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/ntfy <message>` | Send ntfy push notification |
+
+**Config (`extensions/ntfy/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `server_url` | string | `"https://ntfy.sh"` | ntfy server URL |
+| `topic` | string | `""` | ntfy topic name |
+| `token` | string | `""` | Access token (optional) |
+| `priority` | int | `3` | Default priority (1-5) |
+| `tags` | string | `"mesh,meshtastic"` | Comma-separated tags |
+| `notify_on_emergency` | bool | `true` | Auto-notify on emergency |
+| `subscribe_inbound` | bool | `false` | Subscribe for inbound messages |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+
+**Hooks:** `on_emergency`.
+
+---
+
+#### Pushover
+
+Push notifications via the Pushover API with priority levels.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/pushover <message>` | Send Pushover notification |
+
+**Config (`extensions/pushover/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `api_token` | string | `""` | Pushover application API token |
+| `user_key` | string | `""` | Pushover user/group key |
+| `default_priority` | int | `0` | Default priority (-2 to 2) |
+| `emergency_priority` | int | `2` | Priority for emergency alerts |
+| `default_sound` | string | `"pushover"` | Notification sound |
+| `device` | string | `""` | Target device (blank = all) |
+| `retry` | int | `60` | Retry interval for emergency priority (seconds) |
+| `expire` | int | `3600` | Expiry for emergency priority (seconds) |
+| `notify_on_emergency` | bool | `true` | Auto-notify on emergency |
+
+**Hooks:** `on_emergency`.
+
+---
+
+#### PagerDuty
+
+PagerDuty incident management — trigger, acknowledge, and resolve incidents from the mesh.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/pd trigger <summary>` | Create a PagerDuty incident |
+| `/pd ack <incident_id>` | Acknowledge an incident |
+| `/pd resolve <incident_id>` | Resolve an incident |
+| `/pd status` | List open incidents |
+
+**Config (`extensions/pagerduty/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `routing_key` | string | `""` | Events API v2 integration/routing key |
+| `api_token` | string | `""` | REST API token (for ack/resolve/list) |
+| `service_id` | string | `""` | Service ID to filter incidents |
+| `default_severity` | string | `"warning"` | Default severity (`critical`, `error`, `warning`, `info`) |
+| `escalation_policy_id` | string | `""` | Escalation policy ID |
+| `trigger_on_emergency` | bool | `true` | Auto-trigger on emergency broadcasts |
+| `trigger_on_keywords` | array | `["SOS", "MAYDAY", "EMERGENCY"]` | Keywords that trigger incidents |
+| `auto_resolve_minutes` | int | `0` | Auto-resolve after N minutes (0 = off) |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `poll_incidents` | bool | `false` | Poll and broadcast new incidents |
+| `poll_interval_seconds` | int | `120` | Polling interval |
+| `dedup_key_prefix` | string | `"mesh-api"` | Deduplication key prefix |
+
+**Hooks:** `on_emergency`, `on_message` (keyword matching).
+
+---
+
+#### OpsGenie
+
+Atlassian OpsGenie alert management from the mesh.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/og alert <message>` | Create an OpsGenie alert |
+| `/og ack <id>` | Acknowledge an alert |
+| `/og close <id>` | Close an alert |
+| `/og status` | List open alerts |
+
+**Config (`extensions/opsgenie/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `api_key` | string | `""` | OpsGenie API key (GenieKey) |
+| `api_base` | string | `"https://api.opsgenie.com"` | API base URL |
+| `default_priority` | string | `"P3"` | Default priority (P1-P5) |
+| `responders` | array | `[]` | Responder list (OpsGenie format) |
+| `tags` | array | `["mesh-api", "meshtastic"]` | Alert tags |
+| `trigger_on_emergency` | bool | `true` | Auto-trigger on emergency |
+| `trigger_on_keywords` | array | `["SOS", "MAYDAY", "EMERGENCY"]` | Keywords that trigger alerts |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `poll_alerts` | bool | `false` | Poll and broadcast new alerts |
+| `poll_interval_seconds` | int | `120` | Polling interval |
+| `auto_close_minutes` | int | `0` | Auto-close after N minutes (0 = off) |
+
+**Hooks:** `on_emergency`, `on_message` (keyword matching).
+
+---
+
+### Emergency & Weather Extensions
+
+#### NWS Alerts
+
+National Weather Service severe weather alerts with zone-based filtering.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/nws` | Show active NWS alerts for configured zones |
+| `/nwszones` | Show configured alert zones |
+
+**Config (`extensions/nws_alerts/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `zones` | array | `[]` | NWS zone codes (e.g. `["TXC453", "TXZ211"]`) |
+| `poll_interval_seconds` | int | `300` | Polling interval |
+| `min_severity` | string | `"Moderate"` | Minimum severity (`Minor`, `Moderate`, `Severe`, `Extreme`) |
+| `min_urgency` | string | `"Expected"` | Minimum urgency |
+| `min_certainty` | string | `"Likely"` | Minimum certainty |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `auto_broadcast` | bool | `true` | Auto-broadcast new alerts |
+| `max_alert_length` | int | `300` | Max alert text length |
+
+**Hooks:** `on_emergency` (none — outbound broadcast only).
+
+---
+
+#### OpenWeatherMap
+
+Weather data including current conditions, forecasts, and severe weather alerts.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/weather [city]` | Current weather for a city or default location |
+| `/forecast [city]` | 5-day forecast |
+| `/wxalerts` | Active weather alerts for configured coordinates |
+
+**Config (`extensions/openweathermap/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `api_key` | string | `""` | OpenWeatherMap API key |
+| `default_city` | string | `""` | Default city for queries |
+| `default_lat` | string | `""` | Latitude for alerts (One Call 3.0) |
+| `default_lon` | string | `""` | Longitude for alerts |
+| `units` | string | `"imperial"` | Units (`imperial`, `metric`, `standard`) |
+| `poll_interval_seconds` | int | `600` | Alert polling interval |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `auto_broadcast_alerts` | bool | `true` | Auto-broadcast severe weather |
+| `max_alert_length` | int | `250` | Max alert text length |
+
+**Hooks:** `on_emergency` (none — outbound only).
+
+---
+
+#### USGS Earthquakes
+
+USGS earthquake monitoring with magnitude and radius filtering.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/quake` | Show recent earthquakes matching filters |
+| `/quakeconfig` | Show current earthquake monitor config |
+
+**Config (`extensions/usgs_earthquakes/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `min_magnitude` | float | `4.0` | Minimum magnitude to report |
+| `filter_lat` | string | `""` | Center latitude for radius filter |
+| `filter_lon` | string | `""` | Center longitude |
+| `filter_radius_km` | int | `500` | Radius in km (0 = worldwide) |
+| `poll_interval_seconds` | int | `300` | Polling interval |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `auto_broadcast` | bool | `true` | Auto-broadcast new quakes |
+| `include_tsunami_warning` | bool | `true` | Include tsunami flag |
+| `max_results` | int | `5` | Max results per query |
+
+**Hooks:** `on_emergency` (none — outbound only).
+
+---
+
+#### GDACS
+
+Global Disaster Alerting Coordination System — monitors 6 disaster types worldwide.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/gdacs [type]` | Show GDACS alerts (optional type filter: EQ, TC, FL, VO, DR, WF) |
+
+**Config (`extensions/gdacs/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `alert_levels` | array | `["Orange", "Red"]` | Alert levels to include (`Green`, `Orange`, `Red`) |
+| `disaster_types` | array | `["EQ", "TC", "FL", "VO", "DR", "WF"]` | Disaster types |
+| `filter_lat` | string | `""` | Center latitude for proximity filter |
+| `filter_lon` | string | `""` | Center longitude |
+| `filter_radius_km` | int | `0` | Radius (0 = all global) |
+| `poll_interval_seconds` | int | `600` | Polling interval |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `auto_broadcast` | bool | `true` | Auto-broadcast new alerts |
+| `max_alert_length` | int | `300` | Max alert text length |
+
+Disaster type codes: **EQ** = Earthquake, **TC** = Tropical Cyclone, **FL** = Flood, **VO** = Volcano, **DR** = Drought, **WF** = Wildfire.
+
+**Hooks:** `on_emergency` (none — outbound only).
+
+---
+
+#### Amber Alerts
+
+Missing person alerts (AMBER, Silver, Blue) from the NWS CAP feed with state filtering.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/amber` | Show active AMBER alerts |
+| `/silver` | Show active Silver alerts |
+| `/blue` | Show active Blue alerts |
+
+**Config (`extensions/amber_alerts/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `states` | array | `[]` | State codes to filter (e.g. `["TX", "CA"]`, empty = all) |
+| `poll_interval_seconds` | int | `300` | Polling interval |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `auto_broadcast` | bool | `true` | Auto-broadcast new alerts |
+| `max_alert_length` | int | `300` | Max alert text length |
+| `include_silver` | bool | `true` | Include Silver (elderly) alerts |
+| `include_blue` | bool | `true` | Include Blue (law enforcement) alerts |
+
+**Hooks:** `on_emergency` (none — outbound only).
+
+---
+
+### Ham Radio & Off-Grid Extensions
+
+#### Winlink
+
+Winlink Global Radio Email gateway for ham radio operators.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/winlink <address> <message>` | Send a Winlink email |
+| `/wlcheck` | Check for new Winlink messages |
+| `/wlstatus` | Show Winlink connection status |
+
+**Config (`extensions/winlink/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `callsign` | string | `""` | Ham radio callsign |
+| `gateway_host` | string | `""` | RMS gateway hostname |
+| `gateway_port` | int | `8772` | RMS gateway port |
+| `password` | string | `""` | Winlink password |
+| `poll_interval_seconds` | int | `300` | Mailbox polling interval |
+| `auto_forward_to_mesh` | bool | `true` | Auto-forward new mail to mesh |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `max_body_length` | int | `250` | Max message body length |
+| `outbound_enabled` | bool | `true` | Allow sending outbound messages |
+| `winlink_api_url` | string | `"https://api.winlink.org"` | Winlink REST API URL |
+| `winlink_api_key` | string | `""` | Winlink API key |
+| `rms_relay_path` | string | `""` | RMS relay path |
+| `default_to_address` | string | `""` | Default recipient for emergency forwarding |
+
+Integration methods (priority order): Winlink REST API → Pat local client → RMS gateway.
+
+**Hooks:** `on_emergency` (forwards emergency to default address).
+
+---
+
+#### APRS
+
+Automatic Packet Reporting System integration for position and message bridging.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/aprs <callsign>` | Look up station position via aprs.fi |
+| `/aprsmsg <call> <message>` | Send APRS message via APRS-IS |
+| `/aprsnear` | Show nearby APRS stations |
+
+**Config (`extensions/aprs/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `callsign` | string | `""` | Ham radio callsign |
+| `passcode` | string | `""` | APRS-IS passcode |
+| `aprs_is_server` | string | `"rotate.aprs2.net"` | APRS-IS server |
+| `aprs_is_port` | int | `14580` | APRS-IS port |
+| `aprs_fi_api_key` | string | `""` | aprs.fi API key (free) |
+| `filter_range_km` | int | `100` | Position filter radius |
+| `filter_lat` | string | `""` | Filter center latitude |
+| `filter_lon` | string | `""` | Filter center longitude |
+| `poll_interval_seconds` | int | `60` | De-dupe interval for positions |
+| `auto_broadcast_positions` | bool | `false` | Broadcast nearby APRS positions to mesh |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `send_position_to_aprs` | bool | `false` | Publish mesh positions to APRS-IS |
+| `position_comment` | string | `"MESH-API Node"` | APRS position comment |
+| `symbol_table` | string | `"/"` | APRS symbol table |
+| `symbol_code` | string | `"-"` | APRS symbol code |
+| `message_ssid` | string | `"-5"` | SSID for outbound messages |
+
+**Note:** Transmitting on APRS requires a valid amateur radio licence.
+
+**Hooks:** None (command-driven + background listener).
+
+---
+
+#### BBS
+
+Full-featured Bulletin Board System with SQLite store-and-forward messaging.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/bbs help` | Show all BBS commands |
+| `/bbs boards` | List available boards |
+| `/bbs read <board> [n]` | Read last n messages (default 5, max 20) |
+| `/bbs post <board> <msg>` | Post a message |
+| `/bbs search <text>` | Search across all boards |
+| `/bbs msg <node_id> <msg>` | Send a private message |
+| `/bbs inbox` | Check private messages |
+| `/bbs new <name>` | Create a new board |
+| `/bbs del <board> <id>` | Delete your own message |
+| `/bbs info` | Show BBS statistics |
+
+**Config (`extensions/bbs/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `db_filename` | string | `"bbs.db"` | SQLite database filename |
+| `board_name` | string | `"MESH-BBS"` | BBS display name |
+| `motd` | string | `"Welcome to the Mesh BBS!"` | Message of the day |
+| `max_messages_per_board` | int | `500` | Max messages per board (oldest auto-deleted) |
+| `max_message_length` | int | `500` | Max message character length |
+| `max_boards` | int | `20` | Maximum number of boards |
+| `default_boards` | array | `["general", "emergency", "trading", "tech"]` | Default boards created on init |
+| `allow_private_messages` | bool | `true` | Enable private messaging |
+| `message_retention_days` | int | `90` | Auto-delete messages older than N days |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `announce_new_posts` | bool | `true` | Broadcast new post announcements |
+| `require_shortname` | bool | `true` | Require node shortname |
+
+**Database:** SQLite (`bbs.db`) stored in the extension directory. Three tables: `boards`, `messages`, `private_messages`. Automatic cleanup runs every 6 hours.
+
+**Hooks:** None (fully command-driven).
+
+---
+
+### Smart Home Extensions
+
+#### Home Assistant (Extension)
+
+Routes mesh messages to the Home Assistant Conversation API as an AI provider.
+
+This extension functions as an **AI provider** — when `ai_provider` is set to `"home_assistant"` in the main `config.json`, AI queries are routed through HA's conversation API.
+
+**Config (`extensions/home_assistant/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `ha_url` | string | `""` | Home Assistant URL (e.g. `http://homeassistant.local:8123`) |
+| `ha_token` | string | `""` | Long-lived access token |
+| `ha_channel_index` | int | `-1` | Mesh channel for HA (-1 = DM only) |
+| `ha_pin` | string | `""` | Optional PIN to protect access |
+| `ha_language` | string | `"en"` | Conversation language |
+
+**Hooks:** AI provider via `get_ai_response()`.
+
+---
+
+### Extension Management
+
+**Listing Extensions:** Use the `/extensions` command on the mesh to see all loaded extensions and their status.
+
+**Enabling/Disabling:** Edit the extension's `config.json` and set `"enabled": true` or `"enabled": false`, then restart MESH-API.
+
+**Extension Loading:** Extensions are automatically discovered from the `extensions_path` directory (default: `./extensions`). Each subfolder containing an `extension.py` file is loaded. Folders starting with `_` (like `_example`) are skipped.
+
+---
+
+## Developing Custom Extensions
+
+> A step-by-step guide for building custom extensions for the MESH-API plugin system.
+
+### Overview
+
+MESH-API uses a plugin-based extension system where each extension is a self-contained Python package that lives in the `extensions/` directory. Extensions can:
+
+- Register slash commands accessible from the mesh network
+- Send and receive messages to/from the mesh
+- React to emergency broadcasts
+- Observe all inbound mesh messages
+- Expose HTTP endpoints via Flask
+- Run background threads for polling external services
+- Act as AI providers
+
+Extensions are automatically discovered and loaded at startup. No changes to core code are required.
+
+### Quick Start (Extensions)
+
+1. **Copy the template:**
+   ```bash
+   cp -r extensions/_example extensions/my_extension
+   ```
+
+2. **Edit the three files:**
+   - `__init__.py` — leave empty (marks the folder as a Python package)
+   - `config.json` — define your settings (must include `"enabled": true`)
+   - `extension.py` — implement your extension class
+
+3. **Restart MESH-API** — your extension is auto-discovered and loaded.
+
+4. **Verify** — send `/extensions` on the mesh to see it listed.
+
+### Extension Structure
+
+Every extension lives in its own subfolder under `extensions/`:
+
+```
+extensions/
+├── base_extension.py        # Abstract base class (DO NOT MODIFY)
+├── loader.py                 # Extension loader (DO NOT MODIFY)
+├── __init__.py
+└── my_extension/             # Your extension folder
+    ├── __init__.py           # Empty file (required)
+    ├── config.json           # Extension configuration
+    └── extension.py          # Extension implementation
+```
+
+**Naming Rules:**
+- Folder names must be valid Python identifiers (lowercase, underscores OK)
+- Folders starting with `_` are **skipped** by the loader (used for templates)
+- The class inside `extension.py` must subclass `BaseExtension`
+- Class name convention: `<Name>Extension` (e.g. `MyExtension`)
+
+### Base Class API Reference
+
+Every extension inherits from `BaseExtension`. Here's the complete API:
+
+**Constructor (automatic):**
+
+```python
+def __init__(self, extension_dir: str, app_context: dict):
+```
+
+You do **not** override `__init__`. The base class handles:
+- `self.extension_dir` — absolute path to your extension's folder
+- `self.app_context` — shared dict with core helpers (see below)
+- `self._config` — loaded from your `config.json`
+
+**Required Properties (must override):**
+
+| Property | Returns | Description |
+|----------|---------|-------------|
+| `name` | `str` | Human-readable name (e.g. `"My Extension"`) |
+| `version` | `str` | Semantic version (e.g. `"1.0.0"`) |
+
+**Built-in Properties (inherited):**
+
+| Property | Returns | Description |
+|----------|---------|-------------|
+| `enabled` | `bool` | `config["enabled"]` — the loader checks this |
+| `commands` | `dict` | Slash commands to register (override to add) |
+| `config` | `dict` | Read-only access to loaded config |
+
+**Lifecycle Hooks:**
+
+| Method | When Called |
+|--------|------------|
+| `on_load()` | Once after instantiation at startup |
+| `on_unload()` | On shutdown or before hot-reload |
+
+**Message Hooks:**
+
+| Method | Signature | Purpose |
+|--------|-----------|---------|
+| `send_message()` | `(message: str, metadata: dict \| None)` | Outbound: mesh → external service |
+| `receive_message()` | `()` | Inbound polling (prefer background threads) |
+| `handle_command()` | `(command: str, args: str, node_info: dict) → str \| None` | Handle a registered slash command |
+| `on_emergency()` | `(message: str, gps_coords: dict \| None)` | Emergency broadcast hook |
+| `on_message()` | `(message: str, metadata: dict \| None)` | Observe all inbound mesh messages |
+
+**Flask Integration:**
+
+| Method | Signature | Purpose |
+|--------|-----------|---------|
+| `register_routes()` | `(app: Flask)` | Register HTTP endpoints |
+
+**Helper Methods:**
+
+| Method | Signature | Purpose |
+|--------|-----------|---------|
+| `send_to_mesh()` | `(text, channel_index=None, destination_id=None)` | Send a message to the mesh network |
+| `log()` | `(message: str)` | Write to the MESH-API script log |
+| `_save_config()` | `()` | Persist config changes to disk |
+
+**app_context Dict:**
+
+The `app_context` dict provides access to core functionality:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `interface` | `MeshInterface` | The Meshtastic serial/TCP interface |
+| `send_broadcast_chunks` | `function(iface, text, channel_idx)` | Send broadcast message |
+| `send_direct_chunks` | `function(iface, text, destination_id)` | Send direct message |
+| `add_script_log` | `function(message)` | Core logging function |
+| `flask_app` | `Flask` | The Flask application instance |
+| `config` | `dict` | Main `config.json` contents |
+
+### Step-by-Step Tutorial
+
+**1. Create the folder structure:**
+
+```
+extensions/my_sensor/
+├── __init__.py          # Empty
+├── config.json
+└── extension.py
+```
+
+**2. Define config.json:**
+
+```json
+{
+  "enabled": true,
+  "sensor_url": "http://localhost:9000/api/reading",
+  "poll_interval_seconds": 300,
+  "broadcast_channel_index": 0,
+  "unit": "°F"
+}
+```
+
+The only required key is `"enabled"`. Everything else is up to you.
+
+**3. Implement extension.py:**
+
+```python
+"""My Sensor extension — reads temperature from a local sensor API."""
+
+import threading
+import time
+
+try:
+    import requests
+except ImportError:
+    requests = None
+
+from extensions.base_extension import BaseExtension
+
+
+class MySensorExtension(BaseExtension):
+
+    @property
+    def name(self) -> str:
+        return "My Sensor"
+
+    @property
+    def version(self) -> str:
+        return "1.0.0"
+
+    @property
+    def commands(self) -> dict:
+        return {
+            "/temp": "Read the current temperature",
+        }
+
+    def on_load(self) -> None:
+        self._stop = threading.Event()
+        self.log(f"My Sensor loaded. URL: {self.config.get('sensor_url')}")
+
+    def on_unload(self) -> None:
+        self._stop.set()
+        self.log("My Sensor unloaded.")
+
+    def handle_command(self, command: str, args: str,
+                       node_info: dict) -> str | None:
+        if command == "/temp":
+            return self._read_sensor()
+        return None
+
+    def _read_sensor(self) -> str:
+        url = self.config.get("sensor_url", "")
+        unit = self.config.get("unit", "°F")
+        if not url:
+            return "Sensor URL not configured."
+        try:
+            resp = requests.get(url, timeout=5)
+            data = resp.json()
+            temp = data.get("temperature", "?")
+            return f"🌡️ Current temperature: {temp}{unit}"
+        except Exception as exc:
+            return f"⚠️ Sensor error: {exc}"
+```
+
+**4. Test it:**
+
+1. Restart MESH-API
+2. Send `/extensions` on mesh — should show "My Sensor v1.0.0 [enabled]"
+3. Send `/temp` — should return the temperature reading
+
+### Hook Reference
+
+**handle_command(command, args, node_info) → str | None**
+
+The most commonly used hook. Called when a mesh user sends one of your registered commands.
+
+```python
+def handle_command(self, command: str, args: str, node_info: dict) -> str | None:
+    if command == "/mycmd":
+        sender = node_info.get("shortname", "?")
+        return f"Hello {sender}! You said: {args}"
+    return None  # Not our command
+```
+
+**node_info dict:**
+```python
+{
+    "node_id": "!abcd1234",      # Hex node ID
+    "shortname": "ABC",          # 4-char node short name
+    "longname": "Alpha Bravo",   # Full node name
+    "channel_index": 0,          # Channel the message arrived on
+    "is_direct": False,          # True if DM, False if broadcast
+}
+```
+
+**Return value:**
+- `str` — text sent back to the mesh (broadcast or DM depending on context)
+- `None` — command not handled, loader passes to next extension
+
+**on_message(message, metadata)**
+
+Read-only observer hook. Called for **every** inbound mesh message. Use for logging, analytics, keyword scanning, or triggering side-effects.
+
+```python
+def on_message(self, message: str, metadata: dict | None = None) -> None:
+    if "help" in message.lower():
+        self.log(f"Help request detected: {message}")
+```
+
+**Do NOT** return a response from `on_message`. Use `handle_command` for responses, or `send_to_mesh()` for async replies.
+
+**on_emergency(message, gps_coords)**
+
+Called when `/emergency` or `/911` is triggered on the mesh.
+
+```python
+def on_emergency(self, message: str, gps_coords: dict | None = None) -> None:
+    lat = gps_coords.get("lat", "?") if gps_coords else "?"
+    lon = gps_coords.get("lon", "?") if gps_coords else "?"
+    self.log(f"EMERGENCY at {lat},{lon}: {message}")
+    # Forward to your external service here
+```
+
+**send_message(message, metadata)**
+
+Outbound hook. Called by the loader when the core wants to push a message to external services.
+
+```python
+def send_message(self, message: str, metadata: dict | None = None) -> None:
+    requests.post("https://example.com/api", json={"text": message})
+```
+
+**register_routes(app)**
+
+Register Flask HTTP endpoints for inbound webhooks or APIs.
+
+```python
+def register_routes(self, app) -> None:
+    @app.route("/my_extension/webhook", methods=["POST"])
+    def my_webhook():
+        from flask import request, jsonify
+        data = request.get_json()
+        message = data.get("message", "")
+        self.send_to_mesh(message, channel_index=0)
+        return jsonify({"status": "ok"})
+```
+
+### Extension Configuration
+
+**Reading Config:**
+
+```python
+api_key = self.config.get("api_key", "")
+interval = int(self.config.get("poll_interval", 60))
+```
+
+**Updating Config at Runtime:**
+
+```python
+self._config["last_check"] = "2025-01-01T00:00:00Z"
+self._save_config()  # Writes to config.json on disk
+```
+
+**Config Best Practices:**
+- Always provide defaults with `.get(key, default)`
+- Include `"enabled": false` as the first key
+- Use descriptive key names: `poll_interval_seconds`, `broadcast_channel_index`
+- Document every key in your extension's comments or README
+
+### Flask Routes (Extensions)
+
+Extensions can expose HTTP endpoints. The Flask app is passed to `register_routes()`:
+
+```python
+def register_routes(self, app) -> None:
+    @app.route("/my_ext/data", methods=["GET"])
+    def my_data():
+        from flask import jsonify
+        return jsonify({"status": "ok", "extension": self.name})
+
+    @app.route("/my_ext/inbound", methods=["POST"])
+    def my_inbound():
+        from flask import request
+        data = request.get_json(force=True)
+        text = data.get("message", "")
+        if text:
+            self.send_to_mesh(text)
+        return "OK", 200
+```
+
+**Rules:**
+- Use unique route paths prefixed with your extension name
+- Import Flask utilities inside the route functions (avoid circular imports)
+- Keep route handlers lightweight
+
+### Background Threads
+
+Many extensions need to poll external services. Use daemon threads:
+
+```python
+import threading
+import time
+
+class MyExtension(BaseExtension):
+    def on_load(self) -> None:
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._poll_loop,
+            daemon=True,
+            name="my-ext-poll",
+        )
+        self._thread.start()
+
+    def on_unload(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=10)
+
+    def _poll_loop(self) -> None:
+        time.sleep(10)  # Initial delay to let system stabilize
+
+        while not self._stop.is_set():
+            try:
+                data = self._fetch_data()
+                if data:
+                    self.send_to_mesh(f"New data: {data}")
+            except Exception as exc:
+                self.log(f"Poll error: {exc}")
+
+            # Interruptible sleep (checks stop event every second)
+            interval = int(self.config.get("poll_interval_seconds", 60))
+            for _ in range(interval):
+                if self._stop.is_set():
+                    break
+                time.sleep(1)
+```
+
+**Thread Safety Tips:**
+- Use `threading.Lock()` if shared state is accessed from multiple threads
+- Use `threading.Event()` for clean shutdown signaling
+- Use interruptible sleep pattern (loop with 1-second sleeps)
+- Always set `daemon=True` so threads don't prevent exit
+- Give threads descriptive names
+
+### Extension Best Practices
+
+1. **Guard imports** — wrap optional dependencies in try/except:
+   ```python
+   try:
+       import requests
+   except ImportError:
+       requests = None
+   ```
+
+2. **Handle errors gracefully** — never let exceptions crash the main process:
+   ```python
+   try:
+       result = self._call_api()
+   except Exception as exc:
+       return f"⚠️ Error: {exc}"
+   ```
+
+3. **Respect mesh bandwidth** — keep messages short (< 230 chars if possible). The mesh has limited capacity.
+
+4. **De-duplicate** — track seen message IDs to avoid broadcasting the same alert twice:
+   ```python
+   if msg_id in self._seen_ids:
+       return
+   self._seen_ids.add(msg_id)
+   ```
+
+5. **Clean up in on_unload()** — stop threads, close sockets, flush buffers.
+
+**Naming Conventions:**
+- Folder: `snake_case` (e.g. `my_extension`)
+- Class: `PascalCaseExtension` (e.g. `MyExtension`)
+- Commands: `/<lowercase>` — avoid collisions with built-in commands
+- Config keys: `snake_case` with descriptive names
+
+**Message Formatting — Use emoji prefixes for visual scanning on small screens:**
+- 📡 — radio/connectivity
+- 🚨 — alerts/emergencies  
+- ✅ — success/confirmation
+- ⚠️ — warnings/errors
+- 📋 — lists/info
+- 📧 — email/messages
+- 🌡️ — weather/sensors
+
+### Testing Extensions
+
+1. Set `"enabled": true` in your extension's `config.json`
+2. Restart MESH-API
+3. Check the logs for `[ext:YourName]` entries
+4. Send `/extensions` to verify it's loaded
+5. Test each command from a mesh node
+
+Your `self.log()` calls appear in the MESH-API script log with the prefix `[ext:YourName]`. Check the WebUI Logs panel or the log file.
+
+### Extension Troubleshooting
+
+**Extension not loading:**
+- Check that `extension.py` exists in the folder
+- Ensure `__init__.py` exists (even if empty)
+- Verify the class inherits from `BaseExtension`
+- Check that `name` and `version` properties are defined
+- Folder names starting with `_` are ignored intentionally
+- Check logs for import errors
+
+**Commands not responding:**
+- Verify `commands` property returns a dict with your command
+- Check `handle_command()` matches the exact command string
+- Make sure no other extension registers the same command
+- Confirm `"enabled": true` in your config.json
+
+**send_to_mesh not working:**
+- Ensure `app_context` contains a valid `interface`
+- Check that the mesh interface is connected
+- Verify channel index is valid for your mesh configuration
+
+**Config not loading:**
+- Validate JSON syntax in `config.json` (use a JSON linter)
+- Check file permissions
+- Look for log entries about config load failures
+
+### Extension Examples Reference
+
+The `extensions/` directory includes 25+ working extensions you can reference:
+
+| Extension | Complexity | Good Example Of |
+|-----------|-----------|-----------------|
+| `_example` | Minimal | Basic structure, all hooks documented |
+| `ntfy` | Simple | HTTP API + push notifications |
+| `pushover` | Simple | Outbound-only notifications |
+| `nws_alerts` | Medium | Polling + auto-broadcast + filtering |
+| `telegram` | Medium | Bidirectional bridge + long-polling |
+| `mqtt` | Medium | Event-driven with paho-mqtt |
+| `bbs` | Complex | SQLite database + thread safety + subcommands |
+| `aprs` | Complex | Raw TCP sockets + protocol parsing |
+| `discord` | Complex | Webhook + bot + Flask route |
+
+---
+
+## Roadmap
 
 - **API Integration Workflow (Planned)**
   - A guided workflow for adding new API integrations, including configuration templates, validation checks, and safe test routes before production use.
   - Goal: make it easier to connect external services without editing core code.
 
-- **Project Name: MESH-API**
-  - The project name now reflects the platform's growing API routing and integration capabilities.
+- **MeshCore Routing Support (Coming Soon)**
 
 ---
 
 ## Changelog
 
-### New Updates in v0.6.0 PR2 → PR3
+### v0.6.0 RC1 (Release Candidate 1)
+- **WebUI Extensions Manager**
+  - New "Extensions" button in the dashboard toolbar opens a full Extensions Manager modal.
+  - View all available extensions with color-coded status indicators (green=active, yellow=enabled but not loaded, grey=disabled).
+  - Enable/disable extensions directly from the WebUI — toggles are saved to each extension's `config.json`.
+  - Inline JSON config editor for each extension — edit and save any extension's configuration without touching the filesystem.
+  - Hot-Reload button to live-reload all extensions without restarting the server.
+  - New REST API endpoints: `GET /extensions/status`, `GET/PUT /extensions/config/<slug>`, `POST /extensions/toggle/<slug>`, `POST /extensions/reload`.
+- **Incoming Message Sound — Fixed & Improved**
+  - The notification sound system has been completely rewritten. Previously, the `<audio>` element was configured but `.play()` was never called — sounds were non-functional.
+  - New built-in two-tone notification beep using the Web Audio API (no external files required).
+  - Sound plays automatically when new inbound messages arrive (not for outgoing/WebUI/system messages).
+  - New UI Settings controls: enable/disable toggle, volume slider, sound type selector (built-in beep vs. custom file), and a "Test Sound" button.
+  - First page load silently seeds the seen-message set so existing messages don't trigger sounds.
+- **Config Modal Alignment**
+  - Updated config editor help text to reflect the new extension system — removed legacy Discord/Home Assistant references from config.json help.
+  - Added note directing users to the Extensions button for extension configuration.
+- **Docker Preparation**
+  - Updated Dockerfile to include the `extensions/` directory and all built-in extensions.
+  - Updated `docker-compose.yml` with optional extensions volume mount.
+  - Docker images coming with the full v0.6.0 release!
+- **Version Bump**
+  - Updated all version references (banner, footer, README, scripts) to v0.6.0 RC1.
+
+### v0.6.0 Release
+- **Plugin-Based Extensions System**
+  - Brand new drop-in plugin architecture with 25+ built-in extensions across 5 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, and Smart Home.
+  - Extensions can register slash commands, react to emergencies, observe all mesh messages, expose HTTP endpoints via Flask, and run background polling threads.
+  - Each extension is fully self-contained with its own `config.json` — no core code changes required to add, remove, or configure extensions.
+  - New `/extensions` mesh command to list all loaded extensions and their status.
+  - **⚠️ The extensions system and all corresponding extensions are new and largely untested. Please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues) so they may be investigated and addressed.**
+- **12 AI Providers**
+  - Added support for **Claude**, **Gemini**, **Grok**, **OpenRouter**, **Groq**, **DeepSeek**, **Mistral**, and a generic **OpenAI-compatible** endpoint option — in addition to existing LM Studio, OpenAI, Ollama, and Home Assistant providers.
+  - All OpenAI-compatible providers share a unified helper for consistent behavior and error handling.
+- **Extension Categories**
+  - **Communication (11):** Discord, Slack, Telegram, Matrix, Signal, Mattermost, Zello, MQTT, Webhook Generic, IMAP, Mastodon
+  - **Notifications (5):** Apprise, Ntfy, Pushover, PagerDuty, OpsGenie
+  - **Emergency/Weather (5):** NWS Alerts, OpenWeatherMap, USGS Earthquakes, GDACS, Amber Alerts
+  - **Ham Radio/Off-Grid (3):** Winlink, APRS, BBS (SQLite store-and-forward)
+  - **Smart Home (1):** Home Assistant (AI provider extension)
+- **Backward Compatibility**
+  - Legacy Discord and Home Assistant configuration keys in the main `config.json` are automatically migrated to their respective extension configs on first load.
+  - Old configs should work out of the box with the new extension system.
+- **Developer Documentation**
+  - Full extension development guide with base class API reference, step-by-step tutorial, hook reference, configuration patterns, Flask route examples, background thread patterns, best practices, and troubleshooting.
+
+### v0.6.0 Pre-Release 3 (PR3)
 - **New `/nodes-XY` command**
   - Reports online nodes (heard within the last window) and total known nodes.
 - **Online window config**
@@ -123,7 +1411,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 - **AI command matching improvements**
   - `/ai-XY` works reliably in channels; legacy `/aiXY` is also accepted for compatibility.
 
-### New Updates in v0.5.1 → v0.6.0 - SAFETY, STABILITY & COMMUNITY RESPECT
+### v0.6.0 Pre-Release 2 → Pre-Release 3
 - **Mesh safety defaults**
   - LongFast (channel 0) responses are OFF by default; enable `ai_respond_on_longfast` only if your mesh agrees.
   - MQTT response gating: new `respond_to_mqtt_messages` flag (default `false`) to prevent multiple servers from replying at once over MQTT.
@@ -146,8 +1434,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
   - Refined layout: Direct Messages, Channel Messages, and Available Nodes order; mobile stacking with 3‑wide desktop; controls moved to the “Send a Message” header (top‑right).
   - New Commands modal overlay: quickly view available commands and descriptions (via the Commands button). Backed by a lightweight JSON endpoint (`/commands_info`).
   - Scrollable panels with sensible max heights; on mobile, each panel can be collapsed/expanded for easier navigation.
-  - Ticker UX polish: dismiss button is reliably visible and auto‑hides after a short timeout; dismiss state is remembered across refreshes.
-  - Footer badge updated and repositioned: bottom‑right two‑line, centered label “MESH-API v0.6.0 PR3” and “by: MR-TBOT”.
+  - Footer badge: "MESH-API v0.6.0" and "by: MR-TBOT".
   - Emoji reactions: every message now includes a React button that toggles a hidden emoji picker; picking an emoji auto‑sends a reaction (works for both DMs and channel messages).
   - Quick Emoji bar: the “Send a Message” form includes common emojis; clicking inserts into your draft at the cursor without auto‑sending.
   - Reaction feedback: React buttons show Sending/Sent/Failed states and temporarily disable during send to prevent accidental double‑presses.
@@ -155,7 +1442,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
   - Updated README and in‑app `/help` to highlight safety defaults, MQTT gating, and your unique alias.
   - New config keys summarized above; defaults favor safety and reduce congestion.
 
-### New Updates in v0.4.2 → v0.5.1 - NOW IN BETA!
+### v0.4.2 → v0.5.1 - NOW IN BETA!
 - **REBRANDED TO MESH-API** 
 - **WebUI Enhancements**  
   - **Node Search** added for easier node management.  
@@ -177,13 +1464,13 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 ### POSSIBLE BUGS IN BETA v0.5.1 - Web UI ticker isn't honoring read messages in some cases.
 ### INCOMING MESSAGE SOUNDS ARE UNTESTED ON ALL PLATFORMS AND FILESYSTEMS.
 
-### New Updates in v0.4.1 → v0.4.2
+### v0.4.1 → v0.4.2
 - **Initial Ubuntu & Ollama Unidecode Support: -**  
   - User @milo_o - Thank you so much!  I have merged your idea into the main branch - hoping this works as expected for users - please report any problems!  -  https://github.com/mr-tbot/mesh-api/discussions/19
 - **Emergency Email Google Maps Link:**  
   - Emergency email now includes a Google Maps link to the sender's location, rather than just coordinates. - Great call, @Nlantz79!  (Remember - this is only as accurate as the sender node's location precision allows!)
 
-### New Updates in v0.4.0 → v0.4.1
+### v0.4.0 → v0.4.1
 - **Error Handling (ongoing):**  
   - Trying a new method to handle WinError exceptions - which though much improved in v0.4.0 - still occur under the right connection circumstances - especially over Wi-Fi.  
      (**UPDATE: My WinError issues were being caused by a combination of low solar power, and MQTT being enabled on my node.  MQTT - especially using LongFast is very intense on a node, and can cause abrupt connection restarts as noted here:  https://github.com/meshtastic/meshtastic/pull/901 - but - now the script is super robust regardless for handling errors!)**
@@ -191,7 +1478,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
   - Email Subject now includes the long name, short name & Node ID of the sending node, rather than just the Node ID.
 - **INITIAL Docker Support**  
 
-### New Updates in v0.3.0 → v0.4.0
+### v0.3.0 → v0.4.0
 - **Logging & Timestamps:**  
   - Shift to UTC‑based timestamps and enhanced log management.
 - **Discord Integration:**  
@@ -485,132 +1772,171 @@ The MESH-API server (running on Flask) exposes the following endpoints:
 
 ## Configuration
 
-Your `config.json` file controls almost every aspect of MESH-API. Below is an example configuration that includes both the previous settings and the new options:
+Your `config.json` file controls core MESH-API settings — connection, AI, messaging, and emergency alerts. **Integration-specific settings** (Discord, Home Assistant, Slack, Telegram, etc.) are now configured per-extension in `extensions/<name>/config.json`. See the [Extensions System](#extensions-system) section and the WebUI Extensions Manager for details.
+
+Below is the **default** `config.json` with inline explanations:
 
 ```json
 {
-  "debug": false, 
-  "use_mesh_interface": false,  // Set to true if using the Meshtastic mesh interface instead of WiFi
-  "use_wifi": true,  // Set to false if using a serial connection instead of WiFi
-  "wifi_host": "MESHTASTIC NODE IP HERE",  // IP address of your Meshtastic device if using WiFi
-  "wifi_port": 4403,  // Default port for WiFi connection
-  
-  "serial_port": "",  // Set the serial port if using a USB connection (e.g., /dev/ttyUSB0 on Linux or COMx on Windows)
-  "serial_baud": 460800,  // Set baud rate for long USB runs or subpar USB connections
+  "debug": false,                          // Enable verbose debug logging
+  "use_mesh_interface": false,             // Set true to use the Meshtastic mesh interface
+  "use_wifi": false,                       // Set true to connect to your node via WiFi instead of serial
+  "wifi_host": "MESHTASTIC NODE IP HERE",  // IP address of your Meshtastic device (WiFi mode)
+  "wifi_port": 4403,                       // TCP port for WiFi connection (default 4403)
 
-  "ai_provider": "lmstudio, openai, or ollama",  // Select the AI provider: "lmstudio", "openai", or "ollama"
-  "system_prompt": "You are a helpful assistant responding to mesh network chats. Respond in as few words as possible while still answering fully.",  // System prompt for AI interaction
+  "extensions_path": "./extensions",       // Path to the extensions directory
 
-  "lmstudio_url": "http://localhost:1234/v1/chat/completions",  // URL for LM Studio's API
-  // "lmstudio_chat_model": "MODEL IDENTIFIER HERE",  // LM Studio chat model (uncomment and specify if using LM Studio)
-  // "lmstudio_embedding_model": "TEXT EMBEDDING MODEL IDENTIFIER HERE",  // LM Studio embedding model (uncomment and specify if using LM Studio)
-  "lmstudio_timeout": 60,  // Timeout in seconds for LM Studio API requests
+  "ai_respond_on_longfast": false,         // Do NOT auto-respond on LongFast (channel 0) — enable only with mesh/community consent
+  "respond_to_mqtt_messages": false,       // If true, the bot responds to messages that arrived via MQTT (off by default to prevent multi-replies)
 
-  "openai_api_key": "",  // API key for OpenAI (leave empty if not using OpenAI)
-  "openai_model": "gpt-4.1-mini",  // OpenAI model to use (e.g., "gpt-4.1-mini" or "gpt-3.5-turbo")
-  "openai_timeout": 60,  // Timeout in seconds for OpenAI API requests
+  "nodes_online_window_sec": 7200,         // Time window (seconds) for /nodes-XY online count
 
-  "ollama_url": "http://localhost:11434/api/generate",  // URL for Ollama's API
-  "ollama_model": "llama3",  // Ollama model (e.g., "llama3")
-  "ollama_timeout": 60,  // Timeout in seconds for Ollama API requests
-  "ollama_max_parallel": 1,  // Max concurrent Ollama requests (Pi stability)
-  "ollama_keep_alive": "5m",  // Keep the selected model loaded (e.g., "5m"); set to "0" to unload immediately
-  "ollama_options": {  // Optional generation options for Ollama requests
-    "num_ctx": 2048,
-    "temperature": 0.2
-  },
+  "serial_port": "/dev/ttyUSB0",           // Serial port if using USB (e.g., /dev/ttyUSB0 on Linux, COMx on Windows)
+  "serial_baud": 460800,                   // Baud rate for serial connections (lower for long USB runs)
 
-  "home_assistant_enabled": false,  // Set to true to enable Home Assistant integration
-  "home_assistant_channel_index": 1,  // Index of the channel for Home Assistant messages (set to -1 if not using)
-  "home_assistant_url": "http://homeassistant.local:8123/api/conversation/process",  // Home Assistant API URL for conversation processing
-  "home_assistant_token": "INPUT HA TOKEN HERE",  // Home Assistant API token (replace with your token)
-  "home_assistant_timeout": 90,  // Timeout in seconds for Home Assistant API requests
-  "home_assistant_enable_pin": false,  // Set to true to require a PIN for Home Assistant commands
-  "home_assistant_secure_pin": "1234",  // PIN for Home Assistant (if enabled)
+  "ai_command": "",                        // Randomized per-install AI command suffix (e.g., "/ai-9z") — generated on first run to prevent collisions
+  "ai_provider": "lmstudio, openai, ollama, claude, gemini, grok, openrouter, groq, deepseek, mistral, or openai_compatible",
+  "system_prompt": "You are a helpful assistant responding to mesh network chats. Respond in as few words as possible while still answering fully.",
 
+  // --- LM Studio ---
+  "lmstudio_url": "http://localhost:1234/v1/chat/completions",
+  "lmstudio_chat_model": "MODEL IDENTIFIER HERE",
+  "lmstudio_embedding_model": "TEXT EMBEDDING MODEL IDENTIFIER HERE",
+  "lmstudio_timeout": 60,
 
+  // --- OpenAI ---
+  "openai_api_key": "",
+  "openai_model": "gpt-4.1-mini",
+  "openai_timeout": 60,
+
+  // --- Ollama ---
+  "ollama_url": "http://localhost:11434/api/generate",
+  "ollama_model": "llama3",
+  "ollama_timeout": 60,
+  "ollama_max_parallel": 1,               // Max concurrent Ollama requests (useful on low-power hardware)
+  "ollama_options": {},                    // Optional generation overrides (e.g., {"num_ctx": 2048, "temperature": 0.2})
+  "ollama_keep_alive": "10m",             // Keep model loaded for this duration; "0" to unload immediately
+
+  // --- Claude ---
+  "claude_api_key": "",
+  "claude_model": "claude-sonnet-4-20250514",
+  "claude_timeout": 60,
+
+  // --- Gemini ---
+  "gemini_api_key": "",
+  "gemini_model": "gemini-2.0-flash",
+  "gemini_timeout": 60,
+
+  // --- Grok ---
+  "grok_api_key": "",
+  "grok_model": "grok-3",
+  "grok_timeout": 60,
+
+  // --- OpenRouter ---
+  "openrouter_api_key": "",
+  "openrouter_model": "openai/gpt-4.1-mini",
+  "openrouter_timeout": 60,
+
+  // --- Groq ---
+  "groq_api_key": "",
+  "groq_model": "llama-3.3-70b-versatile",
+  "groq_timeout": 60,
+
+  // --- DeepSeek ---
+  "deepseek_api_key": "",
+  "deepseek_model": "deepseek-chat",
+  "deepseek_timeout": 60,
+
+  // --- Mistral ---
+  "mistral_api_key": "",
+  "mistral_model": "mistral-small-latest",
+  "mistral_timeout": 60,
+
+  // --- OpenAI-Compatible (any provider with an OpenAI-compatible API) ---
+  "openai_compatible_api_key": "",
+  "openai_compatible_url": "",
+  "openai_compatible_model": "",
+  "openai_compatible_timeout": 60,
+
+  // --- Channel names ---
   "channel_names": {
-    "0": "LongFast",  // Name for Channel 0
-    "1": "Channel 1",  // Name for Channel 1
-    "2": "Channel 2",  // Name for Channel 2
-    "3": "Channel 3",  // Name for Channel 3
-    "4": "Channel 4",  // Name for Channel 4
-    "5": "Channel 5",  // Name for Channel 5
-    "6": "Channel 6",  // Name for Channel 6
-    "7": "Channel 7",  // Name for Channel 7
-    "8": "Channel 8",  // Name for Channel 8
-    "9": "Channel 9"   // Name for Channel 9
+    "0": "LongFast",
+    "1": "Channel 1",
+    "2": "Channel 2",
+    "3": "Channel 3",
+    "4": "Channel 4",
+    "5": "Channel 5",
+    "6": "Channel 6",
+    "7": "Channel 7",
+    "8": "Channel 8",
+    "9": "Channel 9"
   },
-  
-  "reply_in_channels": true,  // Set to true to allow AI to reply in broadcast channels
-  "reply_in_directs": true,  // Set to true to allow AI to reply in direct messages
-  "ai_respond_on_longfast": false,  // Do NOT respond on LongFast (channel 0) by default; enable only with mesh/community consent
-  "respond_to_mqtt_messages": false,  // If true, the bot will respond to messages that arrived via MQTT (default false to prevent multi-replies)
-  "nodes_online_window_sec": 7200,  // Window for /nodes-XY online count (seconds)
-  
-  "chunk_size": 200,  // Maximum size for message chunks
-  "max_ai_chunks": 5,  // Maximum number of chunks to split AI responses into
-  "chunk_delay": 10,  // Delay between message chunks to reduce congestion
-  
-  "local_location_string": "@ YOUR LOCATION HERE",  // Local string for your node's location (e.g., "@ Home", "@ Roof Node")
-  "ai_node_name": "Mesh-API-Alpha",  // Name for your AI node
-  "ai_command": "/ai-9z",  // Randomized per-install alias for built-in AI commands to prevent AI clashing and looping (change the suffix to your preference)
-  "max_message_log": 0,  // Set the maximum number of messages to log (set to 0 for unlimited)
 
-  "enable_twilio": false,  // Set to true to enable Twilio for emergency alerts via SMS
-  "enable_smtp": false,  // Set to true to enable SMTP for emergency alerts via email
-  "alert_phone_number": "+15555555555",  // Phone number to send emergency SMS alerts to (Twilio)
-  "twilio_sid": "TWILIO_SID",  // Twilio SID (replace with your SID)
-  "twilio_auth_token": "TWILIO_AUTH_TOKEN",  // Twilio Auth Token (replace with your Auth Token)
-  "twilio_from_number": "+14444444444",  // Twilio phone number to send messages from
+  "reply_in_channels": true,              // Allow AI to reply in broadcast channels
+  "reply_in_directs": true,               // Allow AI to reply in direct messages
 
-  "twilio_inbound_target": "channel",  // "channel" or "node" for inbound SMS routing
-  "twilio_inbound_channel_index": 1,  // Channel index to route inbound SMS (if target is "channel")
-  "twilio_inbound_node": "!FFFFFFFF",  // Node ID to route inbound SMS (if target is "node")
+  "chunk_size": 200,                      // Maximum size for message chunks (bytes)
+  "max_ai_chunks": 5,                     // Maximum number of chunks per AI response
+  "chunk_delay": 10,                      // Delay (seconds) between chunks to reduce congestion
 
-  "smtp_host": "SMTP HOST HERE",  // SMTP server hostname (e.g., smtp.gmail.com)
-  "smtp_port": 465,  // SMTP server port (465 for SSL, or 587 for TLS)
-  "smtp_user": "SMTP USER HERE",  // SMTP username (usually your email address)
-  "smtp_pass": "SMTP PASS HERE",  // SMTP password (use app-specific passwords if necessary)
-  "alert_email_to": "ALERT EMAIL HERE",  // Email address to send emergency alerts to
+  "local_location_string": "@ YOUR LOCATION HERE",  // Location label for your node
+  "ai_node_name": "Mesh-API-Alpha",       // Display name for your AI node
 
-  "enable_discord": false,  // Set to true to enable Discord integration for emergency alerts and AI responses
-  "discord_webhook_url": "",  // Discord Webhook URL (for sending messages to Discord)
-  "discord_send_emergency": false,  // Set to true to send emergency alerts to Discord
-  "discord_send_ai": false,  // Set to true to send AI responses to Discord
-  "discord_send_all": false,  // Set to true to send all messages to Discord
-  "discord_receive_enabled": true,  // Enable polling Discord for inbound messages
-  "discord_response_channel_index": null,  // Optional channel index for Discord AI responses
-  "discord_bot_token": "",  // Discord Bot token (required if receive is enabled)
-  "discord_channel_id": "",  // Discord channel ID to poll for inbound messages
-  "discord_inbound_channel_index": 1  // Channel index to route inbound Discord messages into the mesh
+  "force_node_num": null,                 // Override the node number (null = auto-detect)
+  "max_message_log": 0,                   // Max messages to log (0 = unlimited)
+
+  // --- Emergency Alerts: Twilio SMS ---
+  "enable_twilio": false,
+  "enable_smtp": false,
+  "alert_phone_number": "+15555555555",
+  "twilio_sid": "TWILIO_SID",
+  "twilio_auth_token": "TWILIO_AUTH_TOKEN",
+  "twilio_from_number": "+14444444444",
+  "twilio_inbound_target": "channel",      // "channel" or "node" for inbound SMS routing
+  "twilio_inbound_channel_index": 1,
+  "twilio_inbound_node": "!FFFFFFFF",
+
+  // --- Emergency Alerts: SMTP Email ---
+  "smtp_host": "SMTP HOST HERE",
+  "smtp_port": 465,                       // 465 for SSL, 587 for TLS
+  "smtp_user": "SMTP USER HERE",
+  "smtp_pass": "SMTP PASS HERE",
+  "alert_email_to": "ALERT EMAIL HERE"
 }
-
 ```
+
+> **Note:** Discord, Home Assistant, Slack, Telegram, and all other integration-specific settings have been moved to the [Extensions System](#extensions-system). Each extension has its own `config.json` under `extensions/<name>/`. You can manage them via the WebUI Extensions Manager or by editing the files directly.
 
 ---
 
 ## Home Assistant & LLM API Integration
 
 ### Home Assistant Integration
-- **Enable Integration:**  
-  - Set `"home_assistant_enabled": true` in `config.json`.
-- **Configure:**  
-  - Set `"home_assistant_url"` (e.g., `http://homeassistant.local:8123/api/conversation/process`).
-  - Provide `"home_assistant_token"` and adjust `"home_assistant_timeout"`.
-- **Security (Optional):**  
-  - Enable `"home_assistant_enable_pin": true` and set `"home_assistant_secure_pin"`.
-- **Routing:**  
-  - Messages on the channel designated by `"home_assistant_channel_index"` are forwarded to Home Assistant.  
-  - When PIN mode is enabled, include your PIN in the format `PIN=XXXX your message`.
+
+> **Home Assistant is now an extension.** Configure it in `extensions/home_assistant/config.json` or via the WebUI Extensions Manager. See [Extensions System](#extensions-system) for details.
+
+- **Enable:** Set `"enabled": true` in `extensions/home_assistant/config.json`.
+- **Configure:** Set the `url`, `token`, `channel_index`, and `timeout` fields in the extension config.
+- **Security (Optional):** Enable `"enable_pin": true` and set `"secure_pin"` in the extension config.
+- **Routing:** Messages on the designated channel are forwarded to Home Assistant. When PIN mode is enabled, include your PIN in the format `PIN=XXXX your message`.
 
 ### LLM API Integration
-- **LM Studio:**  
-  - Set `"ai_provider": "lmstudio"` and configure `"lmstudio_url"`. - optionally set model and text embedding flags as well if using more than one model on the same LM-Studio instance.
-- **OpenAI:**  
-  - Set `"ai_provider": "openai"`, provide your API key in `"openai_api_key"`, and choose a model.
-- **Ollama:**  
-  - Set `"ai_provider": "ollama"` and configure the corresponding URL and model.
+
+Set `"ai_provider"` in `config.json` to one of the 12 supported providers, then fill in the corresponding API key / URL / model fields:
+
+- **LM Studio:** `"ai_provider": "lmstudio"` — configure `lmstudio_url`, and optionally set `lmstudio_chat_model` / `lmstudio_embedding_model` if using multiple models.
+- **OpenAI:** `"ai_provider": "openai"` — provide `openai_api_key` and choose a model (default `gpt-4.1-mini`).
+- **Ollama:** `"ai_provider": "ollama"` — configure URL, model, and optional generation overrides via `ollama_options`.
+- **Claude:** `"ai_provider": "claude"` — provide `claude_api_key` (default model `claude-sonnet-4-20250514`).
+- **Gemini:** `"ai_provider": "gemini"` — provide `gemini_api_key` (default model `gemini-2.0-flash`).
+- **Grok:** `"ai_provider": "grok"` — provide `grok_api_key` (default model `grok-3`).
+- **OpenRouter:** `"ai_provider": "openrouter"` — provide `openrouter_api_key` (default model `openai/gpt-4.1-mini`).
+- **Groq:** `"ai_provider": "groq"` — provide `groq_api_key` (default model `llama-3.3-70b-versatile`).
+- **DeepSeek:** `"ai_provider": "deepseek"` — provide `deepseek_api_key` (default model `deepseek-chat`).
+- **Mistral:** `"ai_provider": "mistral"` — provide `mistral_api_key` (default model `mistral-small-latest`).
+- **OpenAI-Compatible:** `"ai_provider": "openai_compatible"` — provide `openai_compatible_url`, `openai_compatible_api_key`, and `openai_compatible_model` for any provider with an OpenAI-compatible API.
+
+All providers have a configurable `_timeout` (default 60 seconds).
 
 ---
 
@@ -634,6 +1960,8 @@ Your `config.json` file controls almost every aspect of MESH-API. Below is an ex
 ---
 
 ### Discord Integration: Detailed Setup & Permissions
+
+> **Discord is now an extension.** Configure it in `extensions/discord/config.json` or via the WebUI Extensions Manager. The setup steps below for creating a Discord bot and permissions still apply.
 
 ![483177250_1671387500130340_6790017825443843758_n](https://github.com/user-attachments/assets/0042b7a9-8ec9-4492-8668-25ac977a74cd)
 
@@ -668,39 +1996,38 @@ Your `config.json` file controls almost every aspect of MESH-API. Below is an ex
 - **Invite the Bot:**  
   Open the link in your browser, select the server where you want to add the bot, and authorize it. Make sure you have the “Manage Server” permission in that server.
 
-#### 4. Configure Bot Credentials in `config.json`
-Update your configuration file with the following keys (replace placeholder text with your actual values):
+#### 4. Configure Bot Credentials in Extension Config
+Update `extensions/discord/config.json` with the following keys (or use the WebUI Extensions Manager):
 ```json
 {
-  "enable_discord": true,
-  "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL",
-  "discord_receive_enabled": true,
-  "discord_bot_token": "YOUR_BOT_TOKEN",
-  "discord_channel_id": "YOUR_CHANNEL_ID",
-  "discord_inbound_channel_index": 1,  // or the channel number you prefer
-  "discord_send_ai": true,
-  "discord_send_emergency": true
+  "enabled": true,
+  "webhook_url": "YOUR_DISCORD_WEBHOOK_URL",
+  "receive_enabled": true,
+  "bot_token": "YOUR_BOT_TOKEN",
+  "channel_id": "YOUR_CHANNEL_ID",
+  "inbound_channel_index": 1,
+  "send_ai": true,
+  "send_emergency": true
 }
 ```
-- **discord_webhook_url:**  
+- **webhook_url:**  
   Create a webhook in your desired Discord channel (Channel Settings → Integrations → Webhooks) and copy its URL.
-- **discord_bot_token & discord_channel_id:**  
+- **bot_token & channel_id:**  
   Copy your bot’s token from the Developer Portal and enable message polling by specifying the channel ID where the bot should read messages.  
   To get a channel ID, enable Developer Mode in Discord (User Settings → Advanced → Developer Mode) then right-click the channel and select "Copy ID."
 
 #### 5. Polling Integration (Optional)
 - **Enable Message Polling:**  
-  Set `"discord_receive_enabled": true` to allow the bot to poll for new messages.
+  Set `"receive_enabled": true` in the extension config to allow the bot to poll for new messages.
 - **Routing:**  
-  The configuration key `"discord_inbound_channel_index"` determines the channel number used by MESH-API for routing incoming Discord messages. Make sure it matches your setup.
+  The `"inbound_channel_index"` key determines the mesh channel used by MESH-API for routing incoming Discord messages.
 
 #### 6. Testing Your Discord Setup
-- **Restart MESH-API:**  
-  With the updated configuration, restart your bot.
+- **Restart MESH-API** (or hot-reload via the WebUI Extensions Manager).
 - **Check Bot Activity:**  
   Verify that the bot is present in your server, that it can see messages in the designated channel, and that it can send responses.  
 - **Emergency Alerts & AI Responses:**  
-  Confirm that emergency alerts and AI responses are being posted in Discord as per your configuration (`"discord_send_ai": true` and `"discord_send_emergency": true`).
+  Confirm that emergency alerts and AI responses are being posted in Discord as per your extension configuration.
 
 #### 7. Troubleshooting Tips
 - **Permissions Issues:**  
@@ -744,10 +2071,13 @@ Update your configuration file with the following keys (replace placeholder text
   - The WebUI Dashboard (accessible at [http://localhost:5000/dashboard](http://localhost:5000/dashboard)) displays messages and node status.
   
 - **AI Provider Settings:**  
-  - Adjust `"ai_provider"` and related API settings (timeouts, models, etc.) for LM Studio, OpenAI, Ollama, or Home Assistant integration.
+  - Adjust `"ai_provider"` and related API settings (timeouts, models, etc.) for any of the 12 supported providers: LM Studio, OpenAI, Ollama, Claude, Gemini, Grok, OpenRouter, Groq, DeepSeek, Mistral, or any OpenAI-compatible endpoint.
+  
+- **Extensions:**  
+  - Integration-specific settings (Discord, Home Assistant, Slack, Telegram, etc.) are configured per-extension in `extensions/<name>/config.json`. Use the WebUI Extensions Manager to enable, disable, and configure extensions without editing files directly.
   
 - **Security:**  
-  - If using Home Assistant with PIN protection, follow the specified format (`PIN=XXXX your message`) to ensure messages are accepted.
+  - If using the Home Assistant extension with PIN protection, follow the specified format (`PIN=XXXX your message`) to ensure messages are accepted.
   
 - **Testing:**  
   - You can test SMS sending with your suffixed `/sms-XY` command or trigger an emergency alert to confirm that Twilio and email integrations are functioning.
@@ -757,8 +2087,8 @@ Update your configuration file with the following keys (replace placeholder text
 
 ## Contributing & Disclaimer
 
-- **Beta Software Notice:**  
-  This release (v0.6.0) is in BETA. Expect ongoing changes that may affect existing features. Field testing is recommended before production use.
+- **Release Candidate Notice:**  
+  This release (v0.6.0 RC1) is a release candidate — nearly feature-complete and approaching the full release with Docker images. The extensions system has been tested but some extensions may still have edge cases. Please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues) so they may be investigated and addressed. Field testing is recommended before production use.
 - **Feedback & Contributions:**  
   Report issues or submit pull requests on GitHub. Your input is invaluable.
 - **Use Responsibly:**  
@@ -781,7 +2111,7 @@ Update your configuration file with the following keys (replace placeholder text
 
 ## Conclusion
 
-MESH-API BETA v0.6.0 builds on the v0.5.1 foundation with safer defaults, improved resilience, and a more usable WebUI (commands modal, better layout, and clearer startup info). Whether you’re chatting directly with your node, integrating with Home Assistant, or leveraging multi‑channel alerting (Twilio, Email, Discord), this release offers a more comprehensive and reliable off‑grid AI assistant experience.
+MESH-API v0.6.0 RC1 is the release candidate — almost ready for the full release and Docker images! This build adds a WebUI Extensions Manager, fixed incoming message notifications, and Docker preparation on top of the powerful 25+ extension plugin system, 12 AI providers, and safer defaults. Whether you’re chatting directly with your node, integrating with Home Assistant, or leveraging multi‑channel alerting (Twilio, Email, Discord), this release offers the most comprehensive and extensible off-grid AI assistant experience yet. Please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues) so they may be investigated and addressed.
 
 **Enjoy tinkering, stay safe, and have fun!**  
-Please share your feedback or join our community on GitHub.
+Please share your feedback or report issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues).
