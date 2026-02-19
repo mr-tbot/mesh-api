@@ -122,7 +122,7 @@ Each extension is a self-contained plugin in the `extensions/` directory with it
 
 - **[Communication Extensions](#communication-extensions):** [Discord](#discord) · [Slack](#slack) · [Telegram](#telegram) · [Matrix](#matrix) · [Signal](#signal) · [Mattermost](#mattermost) · [Zello](#zello) · [MQTT (Extension)](#mqtt-extension) · [Webhook Generic](#webhook-generic) · [IMAP](#imap) · [Mastodon](#mastodon)
 - **[Notification Extensions](#notification-extensions):** [Apprise](#apprise) · [Ntfy](#ntfy) · [Pushover](#pushover) · [PagerDuty](#pagerduty) · [OpsGenie](#opsgenie)
-- **[Emergency & Weather Extensions](#emergency--weather-extensions):** [NWS Alerts](#nws-alerts) · [OpenWeatherMap](#openweathermap) · [USGS Earthquakes](#usgs-earthquakes) · [GDACS](#gdacs) · [Amber Alerts](#amber-alerts)
+- **[Emergency & Weather Extensions](#emergency--weather-extensions):** [NWS Alerts](#nws-alerts) · [OpenWeatherMap](#openweathermap) · [USGS Earthquakes](#usgs-earthquakes) · [GDACS](#gdacs) · [Amber Alerts](#amber-alerts) · [NASA Space Weather](#nasa-space-weather)
 - **[Ham Radio & Off-Grid Extensions](#ham-radio--off-grid-extensions):** [Winlink](#winlink) · [APRS](#aprs) · [BBS](#bbs)
 - **[Smart Home Extensions](#smart-home-extensions):** [Home Assistant (Extension)](#home-assistant-extension)
 
@@ -698,6 +698,46 @@ Missing person alerts (AMBER, Silver, Blue) from the NWS CAP feed with state fil
 | `max_alert_length` | int | `300` | Max alert text length |
 | `include_silver` | bool | `true` | Include Silver (elderly) alerts |
 | `include_blue` | bool | `true` | Include Blue (law enforcement) alerts |
+
+**Hooks:** `on_emergency` (none — outbound only).
+
+---
+
+#### NASA Space Weather
+
+NASA DONKI (Database Of Notifications, Knowledge, Information) space weather monitor — tracks geomagnetic storms, solar flares, coronal mass ejections, and more.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/spaceweather` | Show recent space weather events |
+| `/solarflare` | Show recent solar flare activity |
+| `/geomagstorm` | Show recent geomagnetic storms |
+
+**Config (`extensions/nasa_space_weather/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `api_key` | string | `"DEMO_KEY"` | NASA API key (free at [api.nasa.gov](https://api.nasa.gov)) |
+| `poll_interval_seconds` | int | `600` | Polling interval |
+| `auto_broadcast` | bool | `true` | Auto-broadcast new events |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `event_types` | array | `["GST","FLR","CME","IPS","SEP","RBE"]` | Event types to monitor |
+| `min_kp_index` | int | `5` | Min Kp index for geomagnetic storm alerts (1-9) |
+| `min_flare_class` | string | `"M"` | Min solar flare class to broadcast (`A`,`B`,`C`,`M`,`X`) |
+| `lookback_days` | int | `3` | Days of history to query |
+| `max_alert_length` | int | `300` | Max alert text length |
+| `max_results` | int | `5` | Max results per command query |
+
+**Event Types:**
+| Code | Description |
+|------|-------------|
+| `GST` | Geomagnetic Storm — Kp index & G-scale impact |
+| `FLR` | Solar Flare — class (A/B/C/M/X) & source region |
+| `CME` | Coronal Mass Ejection — speed & direction |
+| `IPS` | Interplanetary Shock |
+| `SEP` | Solar Energetic Particle |
+| `RBE` | Radiation Belt Enhancement |
 
 **Hooks:** `on_emergency` (none — outbound only).
 
@@ -1392,7 +1432,7 @@ The `extensions/` directory includes 25+ working extensions you can reference:
 - **Extension Categories**
   - **Communication (11):** Discord, Slack, Telegram, Matrix, Signal, Mattermost, Zello, MQTT, Webhook Generic, IMAP, Mastodon
   - **Notifications (5):** Apprise, Ntfy, Pushover, PagerDuty, OpsGenie
-  - **Emergency/Weather (5):** NWS Alerts, OpenWeatherMap, USGS Earthquakes, GDACS, Amber Alerts
+  - **Emergency/Weather (6):** NWS Alerts, OpenWeatherMap, USGS Earthquakes, GDACS, Amber Alerts, NASA Space Weather
   - **Ham Radio/Off-Grid (3):** Winlink, APRS, BBS (SQLite store-and-forward)
   - **Smart Home (1):** Home Assistant (AI provider extension)
 - **Backward Compatibility**

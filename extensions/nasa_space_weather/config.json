@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "api_key": "DEMO_KEY",
+  "poll_interval_seconds": 600,
+  "auto_broadcast": true,
+  "broadcast_channel_index": 0,
+  "event_types": ["GST", "FLR", "CME", "IPS", "SEP", "RBE"],
+  "min_kp_index": 5,
+  "min_flare_class": "M",
+  "lookback_days": 3,
+  "max_alert_length": 300,
+  "max_results": 5
+}
