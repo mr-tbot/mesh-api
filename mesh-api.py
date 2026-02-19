@@ -3874,10 +3874,15 @@ def main():
             "sanitize_model_output": sanitize_model_output,
             "log_message": log_message,
             "add_ai_prefix": add_ai_prefix,
+            "handle_command": handle_command,
+            "parse_incoming_text": parse_incoming_text,
+            "get_ai_response": get_ai_response,
             "MAX_RESPONSE_LENGTH": MAX_RESPONSE_LENGTH,
             "MAX_CHUNK_SIZE": MAX_CHUNK_SIZE,
+            "CHUNK_DELAY": CHUNK_DELAY,
             "SYSTEM_PROMPT": SYSTEM_PROMPT,
             "AI_NODE_NAME": AI_NODE_NAME,
+            "AI_PREFIX_TAG": AI_PREFIX_TAG,
             "server_start_time": server_start_time,
         }
         extension_loader = ExtensionLoader(EXTENSIONS_PATH, app_context)

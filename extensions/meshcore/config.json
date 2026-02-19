@@ -1,0 +1,40 @@
+{
+  "enabled": false,
+
+  "_comment_connection": "Connection to MeshCore companion node. Set connection_type to 'serial' or 'tcp'.",
+  "connection_type": "serial",
+  "serial_port": "/dev/ttyUSB1",
+  "serial_baud": 115200,
+  "tcp_host": "192.168.1.100",
+  "tcp_port": 5000,
+
+  "_comment_reconnect": "Auto-reconnect settings for the MeshCore connection.",
+  "auto_reconnect": true,
+  "max_reconnect_attempts": 0,
+  "reconnect_interval_sec": 30,
+
+  "_comment_bridge": "Bidirectional message bridging between Meshtastic and MeshCore.",
+  "bridge_enabled": true,
+  "bridge_meshcore_channel_to_meshtastic_channel": {
+    "0": 1
+  },
+  "bridge_meshtastic_channels_to_meshcore_channel": {
+    "1": 0
+  },
+  "bridge_direct_messages": false,
+
+  "_comment_commands": "Enable command processing for messages received from MeshCore nodes.",
+  "commands_enabled": true,
+  "command_prefix": "/",
+
+  "_comment_tags": "Tags prepended to bridged messages to show their origin network.",
+  "meshcore_to_meshtastic_tag": "[MC]",
+  "meshtastic_to_meshcore_tag": "[MT]",
+
+  "_comment_ai": "Allow MeshCore users to trigger AI responses via commands.",
+  "ai_commands_enabled": true,
+
+  "_comment_filters": "Prevent echo loops between the two mesh networks.",
+  "ignore_own_messages": true,
+  "max_message_length": 200
+}

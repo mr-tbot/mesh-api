@@ -7,3 +7,4 @@ Flask==3.1.2
 twilio==9.10.1
 unidecode==1.4.0
 bleak>=0.22.0
+meshcore>=2.2.0
