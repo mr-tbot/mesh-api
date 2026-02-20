@@ -1,6 +1,6 @@
 # MESH-API v0.6.0 RC1 - Almost Ready for Full Release & Docker Images!
 
-- **v0.6.0 RC1** — Release Candidate 1! Plugin-based extensions system with 26+ built-in extensions, 12 AI providers, drop-in plugin architecture, and a fully revamped WebUI with Extensions Manager and improved notification sounds. Docker images are coming with the full release!
+- **v0.6.0 RC1** — Release Candidate 1! Plugin-based extensions system with 29 built-in extensions, 12 AI providers, drop-in plugin architecture, and a fully revamped WebUI with Extensions Manager and improved notification sounds. Docker images are coming with the full release!
 
 - PLEASE NOTE - There are new requirements and new config options - v0.6.0 updates many required library versions and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
 
@@ -52,7 +52,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 ## Features
 
 - **Plugin-Based Extensions System** *(New in v0.6.0)*  
-  - 26+ built-in extensions across 5 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, and Smart Home.
+  - 29 built-in extensions across 7 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, Smart Home, Mesh Bridging, and AI Agents.
   - Drop-in plugin architecture — add or remove extensions by copying a folder. No core code changes required.
   - Extensions can register slash commands, react to emergencies, observe messages, expose HTTP endpoints, and run background services.
   - **WebUI Extensions Manager** — view, enable/disable, and configure extensions from the dashboard.
@@ -350,6 +350,7 @@ Each extension is a self-contained plugin in the `extensions/` directory with it
 - **[Ham Radio & Off-Grid Extensions](#ham-radio--off-grid-extensions):** [Winlink](#winlink) · [APRS](#aprs) · [BBS](#bbs)
 - **[Smart Home Extensions](#smart-home-extensions):** [Home Assistant (Extension)](#home-assistant-extension)
 - **[Mesh Bridging Extensions](#mesh-bridging-extensions):** [MeshCore](#meshcore)
+- **[AI Agent Extensions](#ai-agent-extensions):** [OpenClaw](#openclaw)
 
 ---
 
@@ -1182,6 +1183,37 @@ Bidirectional bridge between the Meshtastic mesh network and a [MeshCore](https:
 | `/api/meshcore/status` | GET | Returns JSON with connection status, bridge state, and channel mappings |
 
 **Hooks:** `on_message()` (outbound Meshtastic→MeshCore bridging), `on_load()` / `on_unload()` (lifecycle).
+
+---
+
+### AI Agent Extensions
+
+#### OpenClaw
+
+Bridges the Meshtastic mesh network to an [OpenClaw](https://openclaw.dev) AI agent instance. Mesh users can query the OpenClaw agent via slash commands; the agent can fan-out responses through its own channels (Telegram, Discord, SMS, etc.). Emergency alerts are optionally forwarded to OpenClaw for multi-channel distribution. An optional polling mode injects proactive messages (scheduled alerts, reminders) from OpenClaw into the mesh.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/claw-XY` | Query the OpenClaw AI agent (XY = your install suffix) |
+| `/agent-XY` | Alias for `/claw-XY` |
+
+**Config (`extensions/openclaw/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `openclaw_url` | string | `"http://localhost:18789"` | OpenClaw gateway API URL |
+| `openclaw_token` | string | `""` | Bearer token for OpenClaw authentication (optional) |
+| `agent_name` | string | `"mesh-api"` | Agent name to address in OpenClaw |
+| `allowed_nodes` | array | `[]` | Node IDs allowed to use OpenClaw (empty = all nodes) |
+| `forward_emergency` | bool | `true` | Forward `/emergency` alerts to OpenClaw |
+| `timeout` | int | `15` | HTTP request timeout in seconds |
+| `poll_enabled` | bool | `false` | Poll OpenClaw for proactively queued messages |
+| `poll_interval` | int | `30` | Polling interval in seconds |
+
+**Hooks:** `handle_command()` (query agent), `on_emergency()` (forward alerts), `send_message()` (relay tagged messages), `receive_message()` (poll queue).
+
+**Companion Skill:** A MESH-API skill file for OpenClaw is included at `skills/mesh-api/SKILL.md` — copy it to `~/.openclaw/skills/mesh-api/SKILL.md` to teach an OpenClaw agent how to interact with MESH-API's REST API.
 
 ---
 

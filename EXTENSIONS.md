@@ -9,11 +9,13 @@ Each extension is a self-contained plugin in the `extensions/` directory with it
 
 ## Table of Contents
 
-- **[Communication Extensions](#communication-extensions):** [Discord](#discord) · [Slack](#slack) · [Telegram](#telegram) · [Matrix](#matrix) · [Signal](#signal) · [Mattermost](#mattermost) · [Zello](#zello) · [MQTT](#mqtt) · [Webhook Generic](#webhook-generic) · [IMAP](#imap) · [Mastodon](#mastodon)
+- **[Communication Extensions](#communication-extensions):** [Discord](#discord) · [Slack](#slack) · [Telegram](#telegram) · [Matrix](#matrix) · [Signal](#signal) · [Mattermost](#mattermost) · [Zello](#zello) · [MQTT](#mqtt) · [Webhook Generic](#webhook-generic) · [IMAP](#imap) · [Mastodon](#mastodon) · [n8n](#n8n)
 - **[Notification Extensions](#notification-extensions):** [Apprise](#apprise) · [Ntfy](#ntfy) · [Pushover](#pushover) · [PagerDuty](#pagerduty) · [OpsGenie](#opsgenie)
-- **[Emergency & Weather Extensions](#emergency--weather-extensions):** [NWS Alerts](#nws-alerts) · [OpenWeatherMap](#openweathermap) · [USGS Earthquakes](#usgs-earthquakes) · [GDACS](#gdacs) · [Amber Alerts](#amber-alerts)
+- **[Emergency & Weather Extensions](#emergency--weather-extensions):** [NWS Alerts](#nws-alerts) · [OpenWeatherMap](#openweathermap) · [USGS Earthquakes](#usgs-earthquakes) · [GDACS](#gdacs) · [Amber Alerts](#amber-alerts) · [NASA Space Weather](#nasa-space-weather)
 - **[Ham Radio & Off-Grid Extensions](#ham-radio--off-grid-extensions):** [Winlink](#winlink) · [APRS](#aprs) · [BBS](#bbs)
 - **[Smart Home Extensions](#smart-home-extensions):** [Home Assistant](#home-assistant)
+- **[Mesh Bridging Extensions](#mesh-bridging-extensions):** [MeshCore](#meshcore)
+- **[AI Agent Extensions](#ai-agent-extensions):** [OpenClaw](#openclaw)
 
 ---
 
@@ -306,6 +308,49 @@ Fediverse / Mastodon bridge for posting toots and reading timeline from the mesh
 
 ---
 
+### n8n
+
+Bidirectional [n8n](https://n8n.io) workflow automation bridge — forward mesh messages and emergencies to n8n webhook triggers, receive workflow outputs on the mesh, list active workflows, and trigger them via slash commands.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/n8n` | Show n8n integration status |
+| `/n8n trigger <id>` | Trigger an n8n workflow by ID |
+| `/n8n workflows` | List active n8n workflows |
+
+**Config (`extensions/n8n/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `webhook_url` | string | `""` | n8n webhook URL for outbound messages |
+| `webhook_secret` | string | `""` | HMAC secret for outbound webhook |
+| `api_base_url` | string | `"http://localhost:5678"` | n8n API base URL |
+| `api_key` | string | `""` | n8n API key |
+| `send_emergency` | bool | `true` | Forward emergency alerts to n8n |
+| `send_ai` | bool | `false` | Forward AI responses to n8n |
+| `send_all` | bool | `false` | Forward all mesh messages to n8n |
+| `receive_enabled` | bool | `true` | Accept inbound messages from n8n |
+| `receive_endpoint` | string | `"/n8n/webhook"` | Flask endpoint for inbound n8n messages |
+| `receive_secret` | string | `""` | Secret for inbound webhook verification |
+| `inbound_channel_index` | int\|null | `null` | Mesh channel filter for outbound |
+| `message_field` | string | `"message"` | JSON field name for the message body |
+| `sender_field` | string | `"sender"` | JSON field name for the sender |
+| `include_metadata` | bool | `true` | Include node metadata in outbound payloads |
+| `poll_executions` | bool | `false` | Poll n8n for recent execution outputs |
+| `poll_interval_seconds` | int | `60` | Polling interval |
+| `broadcast_channel_index` | int | `0` | Mesh channel index for inbound messages |
+| `bot_name` | string | `"MESH-API"` | Bot display name in n8n payloads |
+
+**API Endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/n8n/webhook` | POST | Receive messages from n8n workflows |
+
+**Hooks:** `on_message`, `send_message`, `on_emergency`, Flask route for inbound.
+
+---
+
 ## Notification Extensions
 
 ### Apprise
@@ -592,6 +637,38 @@ Missing person alerts (AMBER, Silver, Blue) from the NWS CAP feed with state fil
 
 ---
 
+### NASA Space Weather
+
+NASA DONKI (Space Weather Database Of Notifications, Knowledge, Information) integration — tracks geomagnetic storms, solar flares, coronal mass ejections, and other space weather events. Auto-broadcasts significant events to the mesh with configurable Kp index and flare class thresholds.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/spaceweather` | Show recent space weather events |
+| `/solarflare` | Show recent solar flare activity |
+| `/geomagstorm` | Show recent geomagnetic storms |
+
+**Config (`extensions/nasa_space_weather/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `api_key` | string | `"DEMO_KEY"` | NASA API key (get one free at api.nasa.gov) |
+| `poll_interval_seconds` | int | `600` | Polling interval for new events |
+| `auto_broadcast` | bool | `true` | Auto-broadcast significant events to mesh |
+| `broadcast_channel_index` | int | `0` | Mesh channel index |
+| `event_types` | array | `["GST", "FLR", "CME", "IPS", "SEP", "RBE"]` | Event types to monitor |
+| `min_kp_index` | int | `5` | Minimum Kp index to report geomagnetic storms |
+| `min_flare_class` | string | `"M"` | Minimum flare class to report (`C`, `M`, `X`) |
+| `lookback_days` | int | `3` | How many days back to query |
+| `max_alert_length` | int | `300` | Max alert text length |
+| `max_results` | int | `5` | Max results per query |
+
+Event type codes: **GST** = Geomagnetic Storm, **FLR** = Solar Flare, **CME** = Coronal Mass Ejection, **IPS** = Interplanetary Shock, **SEP** = Solar Energetic Particle, **RBE** = Radiation Belt Enhancement.
+
+**Hooks:** `on_load()` (starts background poller).
+
+---
+
 ## Ham Radio & Off-Grid Extensions
 
 ### Winlink
@@ -727,6 +804,76 @@ This extension functions as an **AI provider** — when `ai_provider` is set to 
 | `ha_language` | string | `"en"` | Conversation language |
 
 **Hooks:** AI provider via `get_ai_response()`.
+
+---
+
+## Mesh Bridging Extensions
+
+### MeshCore
+
+Bidirectional bridge between the Meshtastic mesh network and a [MeshCore](https://meshcore.co.uk/) mesh network. Requires a separate MeshCore companion-firmware device connected via USB serial or TCP/WiFi.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/meshcore` | Show MeshCore bridge status (connected device, bridge state, channel map) |
+
+**Config (`extensions/meshcore/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `connection_type` | string | `"serial"` | `"serial"` or `"tcp"` |
+| `serial_port` | string | `"/dev/ttyUSB1"` | Serial port for the MeshCore companion device |
+| `serial_baud` | int | `115200` | Serial baud rate |
+| `tcp_host` | string | `"192.168.1.100"` | TCP/WiFi host |
+| `tcp_port` | int | `5000` | TCP port |
+| `auto_reconnect` | bool | `true` | Auto-reconnect on disconnect |
+| `max_reconnect_attempts` | int | `0` | Max reconnect attempts (0 = unlimited) |
+| `reconnect_interval_sec` | int | `30` | Seconds between reconnect attempts |
+| `bridge_enabled` | bool | `true` | Enable bidirectional channel bridging |
+| `bridge_meshcore_channel_to_meshtastic_channel` | object | `{"0": 1}` | Map MeshCore channel → Meshtastic channel |
+| `bridge_meshtastic_channels_to_meshcore_channel` | object | `{"1": 0}` | Map Meshtastic channel → MeshCore channel |
+| `bridge_direct_messages` | bool | `false` | Bridge direct messages between networks |
+| `commands_enabled` | bool | `true` | Allow MeshCore users to issue `/commands` |
+| `command_prefix` | string | `"/"` | Command prefix for MeshCore messages |
+| `meshcore_to_meshtastic_tag` | string | `"[MC]"` | Tag prepended to messages from MeshCore |
+| `meshtastic_to_meshcore_tag` | string | `"[MT]"` | Tag prepended to messages from Meshtastic |
+| `ai_commands_enabled` | bool | `true` | Allow MeshCore users to send AI queries |
+| `ignore_own_messages` | bool | `true` | Prevent echo loops between networks |
+| `max_message_length` | int | `200` | Max characters per bridged message |
+
+**Hooks:** `on_message()` (Meshtastic→MeshCore bridging), `on_emergency()`, `handle_command()`, Flask route `/api/meshcore/status`.
+
+---
+
+## AI Agent Extensions
+
+### OpenClaw
+
+Bridges the Meshtastic mesh network to an [OpenClaw](https://openclaw.dev) AI agent instance. Mesh users can query the OpenClaw agent via slash commands; the agent can fan-out responses through its own channels (Telegram, Discord, SMS, etc.). Emergency alerts are optionally forwarded to OpenClaw for multi-channel distribution. An optional polling mode injects proactive messages (scheduled alerts, reminders) from OpenClaw into the mesh.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/claw-XY` | Query the OpenClaw AI agent (XY = your install suffix) |
+| `/agent-XY` | Alias for `/claw-XY` |
+
+**Config (`extensions/openclaw/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `openclaw_url` | string | `"http://localhost:18789"` | OpenClaw gateway API URL |
+| `openclaw_token` | string | `""` | Bearer token for OpenClaw authentication (optional) |
+| `agent_name` | string | `"mesh-api"` | Agent name to address in OpenClaw |
+| `allowed_nodes` | array | `[]` | Node IDs allowed to use OpenClaw (empty = all nodes) |
+| `forward_emergency` | bool | `true` | Forward `/emergency` alerts to OpenClaw |
+| `timeout` | int | `15` | HTTP request timeout in seconds |
+| `poll_enabled` | bool | `false` | Poll OpenClaw for proactively queued messages |
+| `poll_interval` | int | `30` | Polling interval in seconds |
+
+**Companion Skill:** A MESH-API skill file for OpenClaw is included at `skills/mesh-api/SKILL.md` — copy it to `~/.openclaw/skills/mesh-api/SKILL.md` to teach an OpenClaw agent how to interact with MESH-API's REST API.
+
+**Hooks:** `handle_command()` (query agent), `on_emergency()` (forward alerts), `send_message()` (relay tagged messages), `receive_message()` (poll queue).
 
 ---
 

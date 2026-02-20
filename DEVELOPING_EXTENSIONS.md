@@ -550,7 +550,7 @@ Your `self.log()` calls appear in the MESH-API script log with the prefix `[ext:
 
 ## Examples
 
-The `extensions/` directory includes 25+ working extensions you can reference:
+The `extensions/` directory includes 29 working extensions you can reference:
 
 | Extension | Complexity | Good Example Of |
 |-----------|-----------|-----------------|
@@ -563,6 +563,8 @@ The `extensions/` directory includes 25+ working extensions you can reference:
 | `bbs` | Complex | SQLite database + thread safety + subcommands |
 | `aprs` | Complex | Raw TCP sockets + protocol parsing |
 | `discord` | Complex | Webhook + bot + Flask route |
+| `meshcore` | Complex | Serial/TCP bridge + bidirectional channel mapping |
+| `openclaw` | Medium | External AI agent bridge + polling + emergency forwarding |
 
 ---
 

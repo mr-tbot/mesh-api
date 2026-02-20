@@ -1,0 +1,11 @@
+{
+  "enabled": false,
+  "openclaw_url": "http://localhost:18789",
+  "openclaw_token": "",
+  "agent_name": "mesh-api",
+  "allowed_nodes": [],
+  "forward_emergency": true,
+  "timeout": 15,
+  "poll_interval": 30,
+  "poll_enabled": false
+}
