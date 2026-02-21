@@ -2,6 +2,19 @@
 
 - **v0.6.0 RC1** — Release Candidate 1! Plugin-based extensions system with 30 built-in extensions, 12 AI providers, drop-in plugin architecture, and a fully revamped WebUI with Extensions Manager and improved notification sounds. Docker images are coming with the full release!
 
+> ### ⚠️ A LOT Has Changed — Community Testing Needed!
+>
+> A massive amount of work has landed very quickly — the new plugin-based extensions system, 30+ extensions, OpenClaw AI agent integration, MeshCore bridging, and the full WebUI overhaul all shipped in a compressed timeline. **Bugs almost certainly exist**, especially in:
+>
+> - The **new extension system** (loading, hot-reload, config validation)
+> - **OpenClaw integration** (bidirectional agent bridge, skill/tool interactions)
+> - **Cross-extension interactions** (multiple extensions enabled simultaneously)
+> - **Edge cases** in individual extensions that haven't seen field testing yet
+>
+> **I am depending on the community to help test, identify, and crush these bugs.** If something breaks, doesn't work as documented, or behaves unexpectedly — please open a [GitHub Issue](https://github.com/mr-tbot/mesh-api/issues) with as much detail as possible. Every report helps make this project better for everyone.
+>
+> If MESH-API is useful to you, please consider [making a donation](#-support-mesh-api-development--keep-the-lights-on) — this project is built and maintained by one developer with the help of AI tools, and your support directly fuels continued development.
+
 - PLEASE NOTE - There are new requirements and new config options - v0.6.0 updates many required library versions and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
 
 - Having issues getting up and running?  As of v0.6.0 I have created a custom GPT with Open-AI to assist anyone having problems - give it a try! - https://chatgpt.com/g/g-68d86345f4c4819183c417b3790499c7-mesh-api-setup-assistant
@@ -1250,7 +1263,9 @@ Bridges the Meshtastic mesh network to an [OpenClaw](https://openclaw.dev) AI ag
 
 **Hooks:** `handle_command()` (query agent), `on_emergency()` (forward alerts), `send_message()` (relay tagged messages), `receive_message()` (poll queue).
 
-**Companion Skill:** A MESH-API skill file for OpenClaw is included at `skills/mesh-api/SKILL.md` — copy it to `~/.openclaw/skills/mesh-api/SKILL.md` to teach an OpenClaw agent how to interact with MESH-API's REST API.
+**Companion Skill:** A MESH-API skill file for OpenClaw is included at `openclaw-release/skills/mesh-api/SKILL.md` — copy it to `~/.openclaw/skills/mesh-api/SKILL.md` to teach an OpenClaw agent how to interact with MESH-API's REST API. If you install the `@mesh-api/openclaw-meshtastic` plugin via npm, the skill ships automatically.
+
+**OpenClaw Community Plugin:** A full OpenClaw-native TypeScript plugin is being prepared for release as `@mesh-api/openclaw-meshtastic` — see the [OpenClaw Integration & Community Plugin](#openclaw-integration--community-plugin) section below for the full plan.
 
 ---
 
