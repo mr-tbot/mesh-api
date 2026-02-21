@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "api_url": "https://graph.facebook.com/v21.0",
+  "phone_number_id": "",
+  "access_token": "",
+  "verify_token": "",
+  "recipient_number": "",
+  "send_emergency": false,
+  "send_ai": false,
+  "send_all": false,
+  "receive_enabled": true,
+  "inbound_channel_index": null,
+  "webhook_path": "/whatsapp/webhook",
+  "broadcast_channel_index": 0,
+  "bot_name": "MESH-API"
+}

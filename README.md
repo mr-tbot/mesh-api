@@ -1,6 +1,6 @@
 # MESH-API v0.6.0 RC1 - Almost Ready for Full Release & Docker Images!
 
-- **v0.6.0 RC1** — Release Candidate 1! Plugin-based extensions system with 29 built-in extensions, 12 AI providers, drop-in plugin architecture, and a fully revamped WebUI with Extensions Manager and improved notification sounds. Docker images are coming with the full release!
+- **v0.6.0 RC1** — Release Candidate 1! Plugin-based extensions system with 30 built-in extensions, 12 AI providers, drop-in plugin architecture, and a fully revamped WebUI with Extensions Manager and improved notification sounds. Docker images are coming with the full release!
 
 - PLEASE NOTE - There are new requirements and new config options - v0.6.0 updates many required library versions and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
 
@@ -52,7 +52,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 ## Features
 
 - **Plugin-Based Extensions System** *(New in v0.6.0)*  
-  - 29 built-in extensions across 7 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, Smart Home, Mesh Bridging, and AI Agents.
+  - 30 built-in extensions across 7 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, Smart Home, Mesh Bridging, and AI Agents.
   - Drop-in plugin architecture — add or remove extensions by copying a folder. No core code changes required.
   - Extensions can register slash commands, react to emergencies, observe messages, expose HTTP endpoints, and run background services.
   - **WebUI Extensions Manager** — view, enable/disable, and configure extensions from the dashboard.
@@ -344,7 +344,7 @@ Each extension is a self-contained plugin in the `extensions/` directory with it
 
 ### Extensions Table of Contents
 
-- **[Communication Extensions](#communication-extensions):** [Discord](#discord) · [Slack](#slack) · [Telegram](#telegram) · [Matrix](#matrix) · [Signal](#signal) · [Mattermost](#mattermost) · [Zello](#zello) · [MQTT (Extension)](#mqtt-extension) · [Webhook Generic](#webhook-generic) · [IMAP](#imap) · [Mastodon](#mastodon) · [n8n](#n8n)
+- **[Communication Extensions](#communication-extensions):** [Discord](#discord) · [Slack](#slack) · [Telegram](#telegram) · [Matrix](#matrix) · [Signal](#signal) · [WhatsApp](#whatsapp) · [Mattermost](#mattermost) · [Zello](#zello) · [MQTT (Extension)](#mqtt-extension) · [Webhook Generic](#webhook-generic) · [IMAP](#imap) · [Mastodon](#mastodon) · [n8n](#n8n)
 - **[Notification Extensions](#notification-extensions):** [Apprise](#apprise) · [Ntfy](#ntfy) · [Pushover](#pushover) · [PagerDuty](#pagerduty) · [OpsGenie](#opsgenie)
 - **[Emergency & Weather Extensions](#emergency--weather-extensions):** [NWS Alerts](#nws-alerts) · [OpenWeatherMap](#openweathermap) · [USGS Earthquakes](#usgs-earthquakes) · [GDACS](#gdacs) · [Amber Alerts](#amber-alerts) · [NASA Space Weather](#nasa-space-weather)
 - **[Ham Radio & Off-Grid Extensions](#ham-radio--off-grid-extensions):** [Winlink](#winlink) · [APRS](#aprs) · [BBS](#bbs)
@@ -476,6 +476,43 @@ Bidirectional Signal bridge using the signal-cli-rest-api.
 | `broadcast_channel_index` | int | `0` | Mesh channel index |
 
 **Hooks:** `on_message`, `on_emergency`.
+
+---
+
+#### WhatsApp
+
+Bidirectional WhatsApp bridge using the Meta WhatsApp Business Cloud API. Outbound messages are sent via the Cloud API; inbound messages are received via a webhook endpoint registered with Meta.
+
+**Commands:**
+| Command | Description |
+|---------|-------------|
+| `/whatsapp` | Show WhatsApp integration status |
+
+**Config (`extensions/whatsapp/config.json`):**
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the extension |
+| `api_url` | string | `"https://graph.facebook.com/v21.0"` | WhatsApp Cloud API base URL |
+| `phone_number_id` | string | `""` | WhatsApp Business phone number ID |
+| `access_token` | string | `""` | System User permanent token |
+| `verify_token` | string | `""` | Webhook verification token (you choose this) |
+| `recipient_number` | string | `""` | Default recipient in E.164 format (e.g. `+15551234567`) |
+| `send_emergency` | bool | `false` | Forward emergency alerts to WhatsApp |
+| `send_ai` | bool | `false` | Forward AI responses to WhatsApp |
+| `send_all` | bool | `false` | Forward all mesh messages to WhatsApp |
+| `receive_enabled` | bool | `true` | Accept inbound WhatsApp messages |
+| `inbound_channel_index` | int\|null | `null` | Mesh channel filter for outbound |
+| `webhook_path` | string | `"/whatsapp/webhook"` | Flask endpoint for Meta webhook |
+| `broadcast_channel_index` | int | `0` | Mesh channel for inbound messages |
+| `bot_name` | string | `"MESH-API"` | Bot display name |
+
+**API Endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/whatsapp/webhook` | GET | Meta webhook verification (hub challenge) |
+| `/whatsapp/webhook` | POST | Receive inbound WhatsApp messages |
+
+**Hooks:** `on_message`, `on_emergency`, Flask routes for inbound webhook.
 
 ---
 

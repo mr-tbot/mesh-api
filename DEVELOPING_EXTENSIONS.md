@@ -550,7 +550,7 @@ Your `self.log()` calls appear in the MESH-API script log with the prefix `[ext:
 
 ## Examples
 
-The `extensions/` directory includes 29 working extensions you can reference:
+The `extensions/` directory includes 30 working extensions you can reference:
 
 | Extension | Complexity | Good Example Of |
 |-----------|-----------|-----------------|
