@@ -1,0 +1,80 @@
+{
+  "name": "@mesh-api/openclaw-meshtastic",
+  "version": "1.0.0",
+  "description": "OpenClaw channel plugin for Meshtastic LoRa mesh networks via MESH-API",
+  "author": "mesh-api community",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mr-tbot/mesh-api.git",
+    "directory": "openclaw-release"
+  },
+  "homepage": "https://github.com/mr-tbot/mesh-api/tree/main/openclaw-release#readme",
+  "bugs": {
+    "url": "https://github.com/mr-tbot/mesh-api/issues"
+  },
+  "keywords": [
+    "openclaw",
+    "meshtastic",
+    "mesh",
+    "lora",
+    "radio",
+    "iot",
+    "off-grid",
+    "mesh-api",
+    "channel-plugin"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "skills",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "channel": {
+      "id": "meshtastic",
+      "label": "Meshtastic",
+      "selectionLabel": "Meshtastic (MESH-API)",
+      "docsPath": "/channels/meshtastic",
+      "docsLabel": "meshtastic",
+      "blurb": "LoRa mesh network bridge via MESH-API — send/receive messages, list nodes, relay emergencies.",
+      "order": 80,
+      "aliases": [
+        "mesh",
+        "lora",
+        "mesh-api"
+      ]
+    },
+    "install": {
+      "npmSpec": "@mesh-api/openclaw-meshtastic",
+      "localPath": "openclaw-release",
+      "defaultChoice": "npm"
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

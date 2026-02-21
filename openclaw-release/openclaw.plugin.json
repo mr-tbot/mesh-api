@@ -1,0 +1,110 @@
+{
+  "id": "meshtastic",
+  "name": "Meshtastic (MESH-API)",
+  "version": "1.0.0",
+  "description": "OpenClaw channel plugin for Meshtastic LoRa mesh networks. Bridges OpenClaw to a Meshtastic mesh via a running MESH-API instance — send/receive messages, list nodes, relay emergency alerts.",
+  "author": "mesh-api community",
+  "homepage": "https://github.com/mr-tbot/mesh-api",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "meshApiUrl": {
+        "type": "string",
+        "default": "http://localhost:5000",
+        "description": "Base URL of the MESH-API instance"
+      },
+      "meshApiKey": {
+        "type": "string",
+        "default": "",
+        "description": "Optional bearer token for MESH-API authentication"
+      },
+      "agentName": {
+        "type": "string",
+        "default": "mesh-api",
+        "description": "Agent name used when sending messages to the mesh"
+      },
+      "defaultChannel": {
+        "type": "integer",
+        "default": 0,
+        "minimum": 0,
+        "maximum": 7,
+        "description": "Default Meshtastic channel index for outbound broadcasts"
+      },
+      "pollEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable background polling of MESH-API for new mesh messages"
+      },
+      "pollIntervalSeconds": {
+        "type": "integer",
+        "default": 30,
+        "minimum": 5,
+        "maximum": 300,
+        "description": "How often (seconds) to poll MESH-API for new messages"
+      },
+      "forwardEmergency": {
+        "type": "boolean",
+        "default": true,
+        "description": "Forward emergency alerts from the mesh to OpenClaw channels"
+      },
+      "maxMessageLength": {
+        "type": "integer",
+        "default": 200,
+        "minimum": 50,
+        "maximum": 500,
+        "description": "Max characters per mesh message (longer messages are chunked)"
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "default": 15000,
+        "minimum": 1000,
+        "maximum": 60000,
+        "description": "HTTP request timeout in milliseconds for MESH-API calls"
+      }
+    },
+    "required": [
+      "meshApiUrl"
+    ]
+  },
+  "uiHints": {
+    "meshApiUrl": {
+      "label": "MESH-API URL",
+      "placeholder": "http://192.168.1.50:5000"
+    },
+    "meshApiKey": {
+      "label": "MESH-API Key",
+      "sensitive": true,
+      "placeholder": "Optional bearer token"
+    },
+    "agentName": {
+      "label": "Agent Name",
+      "placeholder": "mesh-api"
+    },
+    "defaultChannel": {
+      "label": "Default Channel",
+      "placeholder": "0"
+    },
+    "pollEnabled": {
+      "label": "Enable Polling"
+    },
+    "pollIntervalSeconds": {
+      "label": "Poll Interval (s)",
+      "placeholder": "30"
+    },
+    "forwardEmergency": {
+      "label": "Forward Emergencies"
+    },
+    "maxMessageLength": {
+      "label": "Max Message Length",
+      "placeholder": "200"
+    },
+    "timeoutMs": {
+      "label": "Timeout (ms)",
+      "placeholder": "15000"
+    }
+  },
+  "skills": [
+    "skills/mesh-api"
+  ]
+}

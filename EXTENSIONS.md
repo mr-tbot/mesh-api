@@ -908,7 +908,7 @@ Bridges the Meshtastic mesh network to an [OpenClaw](https://openclaw.dev) AI ag
 | `poll_enabled` | bool | `false` | Poll OpenClaw for proactively queued messages |
 | `poll_interval` | int | `30` | Polling interval in seconds |
 
-**Companion Skill:** A MESH-API skill file for OpenClaw is included at `skills/mesh-api/SKILL.md` — copy it to `~/.openclaw/skills/mesh-api/SKILL.md` to teach an OpenClaw agent how to interact with MESH-API's REST API.
+**Companion Skill:** A MESH-API skill file for OpenClaw is included at `openclaw-release/skills/mesh-api/SKILL.md` — copy it to `~/.openclaw/skills/mesh-api/SKILL.md` to teach an OpenClaw agent how to interact with MESH-API's REST API. If you install the `@mesh-api/openclaw-meshtastic` plugin via npm, the skill ships automatically.
 
 **Hooks:** `handle_command()` (query agent), `on_emergency()` (forward alerts), `send_message()` (relay tagged messages), `receive_message()` (poll queue).
 
