@@ -141,6 +141,10 @@ connection_status = "Disconnected"
 last_error_message = ""
 reset_event = threading.Event()  # Global event to signal a fatal error and trigger reconnect
 
+# Persistent HTTP session for AI providers (connection pooling)
+http_session = requests.Session()
+http_session.headers.update({"Content-Type": "application/json"})
+
 # -----------------------------
 # Meshtastic and Flask Setup
 # -----------------------------
@@ -176,7 +180,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.6.0 RC1 by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.6.0 by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -741,7 +745,22 @@ def log_message(node_id, text, is_emergency=False, reply_to=None, direct=False, 
 def split_message(text):
     if not text:
         return []
-    return [text[i: i + MAX_CHUNK_SIZE] for i in range(0, len(text), MAX_CHUNK_SIZE)][:MAX_CHUNKS]
+    chunks = []
+    remaining = text
+    for _ in range(MAX_CHUNKS):
+        if not remaining:
+            break
+        if len(remaining) <= MAX_CHUNK_SIZE:
+            chunks.append(remaining)
+            break
+        # Try to split at a word boundary
+        slice_end = MAX_CHUNK_SIZE
+        space_idx = remaining.rfind(' ', 0, slice_end)
+        if space_idx > slice_end // 2:
+            slice_end = space_idx
+        chunks.append(remaining[:slice_end].rstrip())
+        remaining = remaining[slice_end:].lstrip()
+    return chunks
 
 def add_ai_prefix(text: str) -> str:
   """Prefix AI marker if not already present."""
@@ -801,9 +820,12 @@ def send_broadcast_chunks(interface, text, channelIndex):
         try:
             interface.sendText(chunk, destinationId=BROADCAST_ADDR, channelIndex=channelIndex, wantAck=True)
             time.sleep(CHUNK_DELAY)
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError) as e:
+            print(f"❌ Connection error sending broadcast chunk: {e}")
+            reset_event.set()
+            break
         except Exception as e:
             print(f"❌ Error sending broadcast chunk: {e}")
-            # Check both errno and winerror for known connection errors
             error_code = getattr(e, 'errno', None) or getattr(e, 'winerror', None)
             if error_code in (10053, 10054, 10060):
                 reset_event.set()
@@ -828,6 +850,10 @@ def send_direct_chunks(interface, text, destinationId):
             else:
                 interface.sendText(chunk, destinationId=destinationId, wantAck=True)
             time.sleep(CHUNK_DELAY)
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError) as e:
+            print(f"❌ Connection error sending direct chunk: {e}")
+            reset_event.set()
+            break
         except Exception as e:
             print(f"❌ Error sending direct chunk: {e}")
             error_code = getattr(e, 'errno', None) or getattr(e, 'winerror', None)
@@ -953,9 +979,13 @@ def send_to_ollama(user_message):
         except Exception:
             return text or ""
 
+    # Hint Ollama to limit token generation to avoid wasting time on text that gets truncated
+    payload["options"] = dict(payload.get("options") or {})
+    payload["options"].setdefault("num_predict", MAX_RESPONSE_LENGTH)
+
     for attempt in range(2):  # up to 2 attempts
         try:
-            r = requests.post(OLLAMA_URL, json=payload, timeout=OLLAMA_TIMEOUT)
+            r = http_session.post(OLLAMA_URL, json=payload, timeout=OLLAMA_TIMEOUT)
             if r.status_code == 200:
                 jr = r.json()
                 dprint(f"Ollama raw => {jr}")
@@ -1591,18 +1621,24 @@ def on_receive(packet=None, interface=None, **kwargs):
         except Exception as e:
           dprint(f"Extension send_message error: {e}")
       if is_direct:
+        info_print(f"[Info] Dispatching AI reply as DM to {sender_node}")
         send_direct_chunks(interface, ai_out, sender_node)
       else:
+        info_print(f"[Info] Dispatching AI reply as broadcast on channel {ch_idx}")
         send_broadcast_chunks(interface, ai_out, ch_idx)
+  except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError) as e:
+    print(f"⚠️ Connection error in on_receive: {e}")
+    global connection_status
+    connection_status = "Disconnected"
+    reset_event.set()
+    return
   except OSError as e:
     error_code = getattr(e, 'errno', None) or getattr(e, 'winerror', None)
     print(f"⚠️ OSError detected in on_receive: {e} (error code: {error_code})")
     if error_code in (10053, 10054, 10060):
       print("⚠️ Connection error detected. Restarting interface...")
-      global connection_status
       connection_status = "Disconnected"
       reset_event.set()
-    # Instead of re-raising, simply return to prevent thread crash
     return
   except Exception as e:
     print(f"⚠️ Unexpected error in on_receive: {e}")
@@ -1626,6 +1662,24 @@ def get_nodes_api():
                 "longName": ln
             })
     return jsonify(node_list)
+
+@app.route("/api/channels", methods=["GET"])
+def get_channels_api():
+    """Return channel names from the connected Meshtastic node."""
+    channels = {}
+    try:
+        if interface and hasattr(interface, "localNode") and interface.localNode:
+            node = interface.localNode
+            if hasattr(node, "channels") and node.channels:
+                for i, ch in enumerate(node.channels):
+                    if ch and hasattr(ch, "settings") and ch.settings:
+                        name = ch.settings.name if hasattr(ch.settings, "name") else ""
+                        role = ch.role if hasattr(ch, "role") else 0
+                        if role > 0 or i == 0:  # Primary or secondary channels
+                            channels[str(i)] = name if name else ("Primary" if i == 0 else f"Channel {i}")
+    except Exception as e:
+        dprint(f"Error reading channels: {e}")
+    return jsonify(channels)
 
 @app.route("/connection_status", methods=["GET"], endpoint="connection_status_info")
 def connection_status_info():
@@ -1790,11 +1844,21 @@ def dashboard():
                     tstr = str(tstamp)
             else:
                 tstr = None
+            # Last heard time from Meshtastic node info
+            last_heard_epoch = ninfo.get("lastHeard") or ninfo.get("last_heard")
+            last_heard_str = None
+            if last_heard_epoch:
+                try:
+                    lh_dt = datetime.fromtimestamp(last_heard_epoch, timezone.utc)
+                    last_heard_str = lh_dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+                except Exception:
+                    last_heard_str = str(last_heard_epoch)
             node_gps_info[str(nid)] = {
                 "lat": lat,
                 "lon": lon,
                 "beacon_time": tstr,
                 "hops": hops,
+                "lastHeard": last_heard_str,
             }
     node_gps_info_json = json.dumps(node_gps_info)
 
@@ -1806,11 +1870,21 @@ def dashboard():
 <html>
 <head>
   <title>MESH-API Dashboard</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
   <style>
-  :root { --theme-color: #ffa500; }
+  :root { --theme-color: #ffa500; --bg-primary: #000; --bg-panel: #111; --bg-input: #222; --text-primary: #fff; --text-muted: #aaa; --border-radius: 10px; --color-map: #ffa500; --color-send: #ffa500; --color-dm: #ffa500; --color-channel: #ffa500; --color-nodes: #ffa500; --color-discord: #ffa500; }
   html, body { margin: 0; padding: 0; }
-  body { background:#000; color:#fff; font-family: Arial, sans-serif; }
-    body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0; transition: filter 0.5s linear; }
+  /* Beta Disclaimer Modal */
+  #disclaimerOverlay { position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:100000; display:flex; align-items:center; justify-content:center; }
+  #disclaimerOverlay .disclaimer-box { background:#111; border:2px solid var(--theme-color); border-radius:12px; max-width:560px; width:90%; padding:32px; text-align:center; }
+  #disclaimerOverlay h2 { color:var(--theme-color); margin-top:0; font-size:1.5em; }
+  #disclaimerOverlay .disclaimer-text { color:#ccc; font-size:0.95em; line-height:1.6; margin:16px 0 24px; text-align:left; }
+  #disclaimerOverlay .disclaimer-btns { display:flex; gap:16px; justify-content:center; }
+  #disclaimerOverlay .btn-accept { background:#2e7d32; color:#fff; border:none; padding:12px 32px; border-radius:8px; font-size:1em; font-weight:bold; cursor:pointer; }
+  #disclaimerOverlay .btn-accept:hover { background:#388e3c; }
+  body { background: var(--bg-primary); color: var(--text-primary); font-family: 'Segoe UI', Arial, sans-serif; margin: 0; transition: filter 0.5s linear; }
   #connectionStatus { position: relative; width: 100%; text-align: center; padding: 0; font-size: 14px; font-weight: bold; display: block; min-height: 20px; background: green; margin: 0; border-bottom: 1px solid var(--theme-color); }
   /* Header buttons moved inside Send Form panel */
   #ticker-container { position: relative; width: 100%; display: none; align-items: center; justify-content: center; pointer-events: none; margin: 0; }
@@ -1818,25 +1892,43 @@ def dashboard():
     #ticker p { display: inline-block; margin: 0; animation: tickerScroll 30s linear infinite; vertical-align: middle; min-width: 100vw; }
     #ticker .dismiss-btn { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); font-size: 18px; background: #222; color: #fff; border: 1px solid var(--theme-color); border-radius: 4px; cursor: pointer; padding: 2px 10px; z-index: 10; }
     @keyframes tickerScroll { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
-    #sendForm { margin: 20px; padding: 20px; background: #111; border: 2px solid var(--theme-color); border-radius: 10px; position: relative; }
+    #sendForm { margin: 20px; padding: 20px; background: var(--bg-panel); border: 2px solid var(--color-send); border-radius: var(--border-radius); position: relative; }
+    #sendForm h2 { color: var(--color-send); }
+    #nodeMapPanel { border-color: var(--color-map); }
+    #nodeMapPanel h2 { color: var(--color-map); }
+    #nodeMapPanel .collapse-btn { border-color: var(--color-map); }
+    [data-col="dm"] .lcars-panel { border-color: var(--color-dm); }
+    [data-col="dm"] .lcars-panel h2 { color: var(--color-dm); }
+    [data-col="dm"] .collapse-btn { border-color: var(--color-dm); }
+    [data-col="channel"] .lcars-panel { border-color: var(--color-channel); }
+    [data-col="channel"] .lcars-panel h2 { color: var(--color-channel); }
+    [data-col="channel"] .collapse-btn { border-color: var(--color-channel); }
+    [data-col="nodes"] .lcars-panel { border-color: var(--color-nodes); }
+    [data-col="nodes"] .lcars-panel h2 { color: var(--color-nodes); }
+    [data-col="nodes"] .collapse-btn { border-color: var(--color-nodes); }
+    #discordSection { border-color: var(--color-discord); }
+    #discordSection h2 { color: var(--color-discord); }
     .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
     .three-col { display: flex; flex-wrap: wrap; gap: 20px; margin: 20px; }
-    .three-col .col { flex: 1 1 100%; }
+    .three-col .col { flex: 1 1 100%; min-width: 0; }
     @media (min-width: 992px) {
       .three-col { flex-wrap: nowrap; }
-      .three-col .col { flex: 1 1 0; }
+      .three-col .col { flex: 1 1 0; min-width: 0; }
     }
-    .lcars-panel { background: #111; padding: 20px; border: 2px solid var(--theme-color); border-radius: 10px; }
-    .lcars-panel h2 { color: var(--theme-color); margin-top: 0; }
+    .three-col .col .drag-handle { cursor: grab; display: inline-block; margin-right: 6px; color: #666; font-size: 1em; user-select: none; }
+    .three-col .col .drag-handle:hover { color: var(--theme-color); }
+    .lcars-panel { background: var(--bg-panel); padding: 20px; border: 2px solid var(--theme-color); border-radius: var(--border-radius); transition: box-shadow 0.2s; }
+    .lcars-panel:hover { box-shadow: 0 0 8px rgba(255,165,0,0.15); }
+    .lcars-panel h2 { color: var(--theme-color); margin-top: 0; font-size: 1.15em; }
     .lcars-panel .panel-title-row { display:flex; align-items:center; justify-content: space-between; gap: 10px; }
-    .lcars-panel .collapse-btn { background:#222; color:#fff; border:1px solid var(--theme-color); border-radius:4px; padding:2px 8px; cursor:pointer; display:none; }
-    @media (max-width: 991px) { .lcars-panel .collapse-btn { display:inline-block; } }
+    .lcars-panel .collapse-btn { background:var(--bg-input); color:#fff; border:1px solid var(--theme-color); border-radius:4px; padding:2px 8px; cursor:pointer; display:inline-block; font-size:0.85em; }
     .lcars-panel .panel-body { overflow-y:auto; max-height: 50vh; }
     @media (min-width: 992px) { .lcars-panel .panel-body { max-height: calc(100vh - 360px); } }
-    .message { border: 1px solid var(--theme-color); border-radius: 4px; margin: 5px; padding: 5px; }
-    .message.outgoing { background: #222; }
-    .message.newMessage { border-color: #00ff00; background: #1a2; }
-    .message.recentNode { border-color: #00bfff; background: #113355; }
+    .message { border: 1px solid var(--theme-color); border-radius: 6px; margin: 6px 0; padding: 8px 10px; transition: background 0.2s; }
+    .message:hover { background: #1a1a1a; }
+    .message.outgoing { background: var(--bg-input); }
+    .message.newMessage { border-color: #00ff00; background: rgba(0,170,34,0.15); }
+    .message.recentNode { border-color: #00bfff; background: rgba(17,51,85,0.6); }
     .timestamp { font-size: 0.8em; color: #666; }
     .btn { margin-left: 10px; padding: 2px 6px; font-size: 0.8em; cursor: pointer; }
     .switch { position: relative; display: inline-block; width: 60px; height: 34px; vertical-align: middle; }
@@ -1849,8 +1941,9 @@ def dashboard():
     .slider.round { border-radius: 34px; }
     .slider.round:before { border-radius: 50%; }
     #charCounter { font-size: 0.9em; color: #ccc; text-align: right; margin-top: 5px; }
-    .nodeItem { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--theme-color); display: flex; flex-direction: column; align-items: flex-start; flex-wrap: wrap; }
-    .nodeItem.recentNode { border-bottom: 2px solid #00bfff; background: #113355; }
+    .nodeItem { margin-bottom: 10px; padding: 8px; border: 1px solid #333; border-radius: 6px; display: flex; flex-direction: column; align-items: flex-start; flex-wrap: wrap; transition: background 0.15s; }
+    .nodeItem:hover { background: #1a1a1a; }
+    .nodeItem.recentNode { border-color: #00bfff; background: rgba(17,51,85,0.5); }
     .nodeMainLine { font-weight: bold; font-size: 1.1em; }
     .nodeLongName { color: #aaa; font-size: 0.98em; margin-top: 2px; }
     .nodeInfoLine { margin-top: 2px; font-size: 0.95em; color: #ccc; display: flex; flex-wrap: wrap; gap: 10px; }
@@ -1859,8 +1952,24 @@ def dashboard():
     .nodeHops { color: #6cf; font-size: 0.92em; }
     .nodeMapBtn { margin-left: 0; background: #222; color: #fff; border: 1px solid #ffa500; border-radius: 4px; padding: 2px 6px; font-size: 1em; cursor: pointer; text-decoration: none; }
     .nodeMapBtn:hover { background: #ffa500; color: #000; }
-    .channel-header { display: flex; align-items: center; gap: 10px; }
-    .reply-btn { margin-left: 10px; padding: 2px 8px; font-size: 0.85em; background: #222; color: var(--theme-color); border: 1px solid var(--theme-color); border-radius: 4px; cursor: pointer; }
+    .channel-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    /* Collapsible channel groups */
+    .channel-group { border: 1px solid #333; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+    .channel-group-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: var(--bg-input); cursor: pointer; user-select: none; border-bottom: 1px solid #333; }
+    .channel-group-header:hover { background: #2a2a2a; }
+    .channel-group-header h3 { margin: 0; font-size: 1em; }
+    .channel-group-header .ch-toggle { font-size: 0.85em; transition: transform 0.2s; }
+    .channel-group-header .ch-toggle.collapsed { transform: rotate(-90deg); }
+    .channel-group-body { padding: 6px 10px; }
+    .channel-group-body.collapsed { display: none; }
+    .reply-btn { margin-left: 10px; padding: 4px 10px; font-size: 0.85em; background: var(--bg-input); color: var(--theme-color); border: 1px solid var(--theme-color); border-radius: 5px; cursor: pointer; transition: background 0.15s, color 0.15s; }
+    .reply-btn:hover { background: var(--theme-color); color: #000; }
+    .btn-send { background: #1b5e20; color: #fff; border-color: #388e3c; }
+    .btn-send:hover { background: #388e3c; color: #fff; }
+    .btn-reply-dm { background: #0d47a1; color: #fff; border-color: #1565c0; }
+    .btn-reply-dm:hover { background: #1565c0; color: #fff; }
+    .btn-reply-channel { background: #4a148c; color: #fff; border-color: #7b1fa2; }
+    .btn-reply-channel:hover { background: #7b1fa2; color: #fff; }
     .mark-read-btn { margin-left: 10px; padding: 2px 8px; font-size: 0.85em; background: #222; color: #0f0; border: 1px solid #0f0; border-radius: 4px; cursor: pointer; }
     .mark-all-read-btn { margin-left: 10px; padding: 2px 8px; font-size: 0.85em; background: #222; color: #ff0; border: 1px solid #ff0; border-radius: 4px; cursor: pointer; }
   /* React / Emoji */
@@ -1884,24 +1993,88 @@ def dashboard():
     .nodeSortBar select { background: #222; color: #fff; border: 1px solid var(--theme-color); border-radius: 4px; padding: 2px 8px; }
     /* Full width search bar for nodes */
     #nodeSearch { width: 100%; margin-bottom: 10px; font-size: 1em; padding: 6px; box-sizing: border-box; }
-  /* UI Settings panel: hidden by default; shown when open */
-  .settings-panel { display: none; background: #111; border: 2px solid var(--theme-color); border-radius: 10px; padding: 20px; margin: 20px; max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
-  .settings-panel.open { display: block; max-height: 70vh; overflow: auto; padding-bottom: 80px; }
-  .settings-panel .sticky-actions { position: sticky; bottom: 0; background: #111; padding-top: 10px; padding-bottom: 6px; }
+  /* UI Settings panel: fixed overlay */
+  .settings-panel { display:none; position:fixed; top:0; right:0; bottom:0; width:min(90vw,900px); background:var(--bg-panel); border-left:2px solid var(--theme-color); z-index:50000; overflow-y:auto; padding:24px; box-shadow:-4px 0 30px rgba(0,0,0,0.7); transition:transform 0.3s ease; }
+  .settings-panel.open { display:block; }
+  .settings-panel .sticky-actions { position:sticky; bottom:0; background:#111; padding:12px 0 6px; z-index:1; }
+  .settings-panel .settings-two-col { display:grid; grid-template-columns:1fr 1fr; gap:0 32px; }
+  .settings-panel .settings-two-col > div { min-width:0; }
+  @media (max-width:768px) { .settings-panel { width:100vw; } .settings-panel .settings-two-col { grid-template-columns:1fr; } }
+  .settings-panel h3 { color:var(--theme-color); margin:16px 0 8px; font-size:1em; }
+  #applySettingsBtn { background:var(--theme-color); color:#000; border:none; padding:10px 28px; border-radius:6px; font-weight:bold; font-size:1em; cursor:pointer; transition:background 0.15s,transform 0.1s; }
+  #applySettingsBtn:hover { filter:brightness(1.15); transform:scale(1.02); }
+  #applySettingsBtn:active { transform:scale(0.98); }
+  .settings-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:49999; }
+  .settings-overlay.open { display:block; }
     /* Timezone selector */
     #timezoneSelect { margin-left: 10px; }
-  /* Footer link bottom right */
-  .footer-right-link { position: fixed; bottom: 10px; right: 10px; z-index: 350; text-align: right; }
+  /* Footer link bottom right (version only) */
+  .footer-right-link { position: fixed; bottom: 10px; right: 10px; z-index: 10000; text-align: right; }
+  /* Centered footer bar for Support + Bug buttons */
+  .footer-center-bar { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 10000; display: flex; gap: 8px; align-items: center; justify-content: center; }
+  .footer-center-bar .btnlink { display:inline-block; color:#fff; text-decoration:none; font-weight:bold; padding:6px 10px; border:1px solid var(--theme-color); border-radius:6px; white-space:nowrap; text-align:center; cursor:pointer; font-size:0.85em; }
+  .footer-center-bar .btnlink:hover { filter:brightness(1.2); }
+  /* Node map panel */
+  #nodeMapPanel { margin: 20px; }
+  #nodeMapPanel .panel-body { overflow: hidden; }
+  #nodeMapPanel.collapsed .panel-body { display: none; }
+  #nodeMap { width: 100%; height: 400px; background: var(--bg-input); border-radius: 6px; position: relative; }
+  /* Shortname labels on map markers */
+  .leaflet-marker-label { background: rgba(0,0,0,0.75); color: #fff; font-size: 11px; padding: 1px 5px; border-radius: 3px; white-space: nowrap; border: 1px solid var(--theme-color); }
+  /* Mini DM box floating over the map */
+  #mapDmBox { display:none; position:absolute; bottom:12px; left:50%; transform:translateX(-50%); z-index:10001; background:var(--bg-panel); border:2px solid var(--theme-color); border-radius:10px; padding:12px 16px; min-width:280px; max-width:90%; box-shadow:0 4px 20px rgba(0,0,0,0.6); }
+  #mapDmBox .mapDm-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  #mapDmBox .mapDm-header h4 { margin:0; color:var(--theme-color); font-size:0.95em; }
+  #mapDmBox .mapDm-header button { background:none; border:none; color:#aaa; font-size:1.2em; cursor:pointer; }
+  #mapDmBox textarea { width:100%; min-height:48px; background:var(--bg-input); color:var(--text-primary); border:1px solid #444; border-radius:6px; padding:6px 8px; font-size:0.9em; resize:vertical; box-sizing:border-box; }
+  #mapDmBox .mapDm-send { margin-top:6px; background:var(--theme-color); color:#000; border:none; padding:6px 18px; border-radius:6px; font-weight:bold; cursor:pointer; }
+  #mapDmBox .mapDm-send:hover { filter:brightness(0.85); }
+  /* Draggable sections — flex layout for side-by-side */
+  #sortableContainer { display: flex; flex-wrap: wrap; align-items: stretch; }
+  #sortableContainer > div { position: relative; box-sizing: border-box; }
+  /* Map and Send side by side at half width */
+  #sortableContainer > div[data-section="nodeMapPanel"],
+  #sortableContainer > div[data-section="sendForm"] { flex: 1 1 50%; min-width: 320px; display: flex; flex-direction: column; }
+  #sortableContainer > div[data-section="nodeMapPanel"] > .lcars-panel,
+  #sortableContainer > div[data-section="sendForm"] > .lcars-panel { flex: 1; display: flex; flex-direction: column; }
+  #sortableContainer > div[data-section="sendForm"] > .lcars-panel > form { flex: 1; display: flex; flex-direction: column; }
+  /* Full width for three-col and discord */
+  #sortableContainer > div[data-section="threeCol"],
+  #sortableContainer > div[data-section="discordSection"] { flex: 1 1 100%; }
+  /* Resizable panels — only on panels that handle overflow safely (not the map) */
+  #sendForm { resize: horizontal; overflow: auto; }
+  .three-col .lcars-panel { resize: horizontal; overflow: auto; }
+  #discordSection { resize: horizontal; overflow: auto; }
+  /* Section hide button */
+  .section-hide-btn { background:none; border:1px solid #666; color:#aaa; font-size:0.85em; cursor:pointer; border-radius:4px; padding:1px 7px; margin-left:6px; }
+  .section-hide-btn:hover { color:#f66; border-color:#f66; }
+  @media (max-width: 600px) {
+    #nodeMap { height: 280px; }
+    .masthead { flex-direction: column; text-align: center; }
+    .masthead-actions { justify-content: center; }
+    .footer-center-bar { flex-direction: row; gap: 4px; bottom: 50px; }
+    .footer-left-link { bottom: auto; top: auto; }
+    #sendForm { margin: 10px; padding: 12px; resize: none; }
+    .three-col { margin: 10px; gap: 12px; }
+    .three-col .lcars-panel { resize: none; }
+    #discordSection { resize: none; }
+    #sortableContainer > div[data-section="nodeMapPanel"],
+    #sortableContainer > div[data-section="sendForm"] { flex: 1 1 100%; min-width: 0; }
+  }
+  .drag-handle { cursor: grab; display: inline-block; margin-right: 8px; color: #666; font-size: 1.1em; user-select: none; vertical-align: middle; }
+  .drag-handle:hover { color: var(--theme-color); }
+  .sortable-ghost { opacity: 0.4; }
+  .sortable-chosen { box-shadow: 0 0 12px var(--theme-color); }
   .footer-right-link .btnlink { display:inline-block; color: var(--theme-color); text-decoration: none; font-weight: bold; background: #111; padding: 6px 10px; border: 1px solid var(--theme-color); border-radius: 6px; white-space: pre-line; text-align: center; }
   .footer-right-link .btnlink:hover { background: var(--theme-color); color: #000; }
   /* Footer UI Settings button bottom left */
-  .footer-left-link { position: fixed; bottom: 10px; left: 10px; z-index: 350; text-align: left; }
+  .footer-left-link { position: fixed; bottom: 10px; left: 10px; z-index: 10000; text-align: left; }
   .footer-left-link .btnlink { display:inline-block; color: var(--theme-color); text-decoration: none; font-weight: bold; background: #111; padding: 6px 10px; border: 1px solid var(--theme-color); border-radius: 6px; white-space: pre-line; text-align: center; cursor: pointer; }
   .footer-left-link .btnlink:hover { background: var(--theme-color); color: #000; }
     /* Suffix chip */
     .suffix-chip { background:#111; color: var(--theme-color); border:1px solid var(--theme-color); padding:6px 10px; border-radius:6px; display:inline-block; }
     /* Modal overlay for Commands */
-    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 500; display: none; align-items: center; justify-content: center; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 60000; display: none; align-items: center; justify-content: center; }
     .modal-content { background:#111; border:2px solid var(--theme-color); border-radius:10px; width: 80vw; max-width: 1000px; max-height: 80vh; overflow:auto; box-shadow: 0 0 20px rgba(0,0,0,0.6); }
     .modal-header { display:flex; align-items:center; justify-content: space-between; padding:10px 14px; background:#222; border-bottom:2px solid var(--theme-color); }
     .modal-header h3 { margin:0; color: var(--theme-color); }
@@ -1915,8 +2088,8 @@ def dashboard():
   .masthead { display:flex; flex-wrap:wrap; align-items:center; justify-content: space-between; gap: 16px; margin: 20px 20px 0 20px; }
   .masthead .logo-wrap { position: relative; display: inline-block; flex: 0 0 auto; }
   .masthead img { width: clamp(140px, 20vw, 260px); height:auto; display:block; }
-  /* Theme color tint overlay for logo (masked to logo shape) */
-  .masthead .logo-overlay { position: absolute; inset: 0; background: var(--theme-color); opacity: 0.35; pointer-events: none; }
+  /* Logo overlay — fixed color, NOT affected by theme/color settings */
+  .masthead .logo-overlay { position: absolute; inset: 0; background: #ffa500; opacity: 0.35; pointer-events: none; }
   .masthead-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap: 10px; margin-left: auto; }
   .masthead-actions button { background: #222; color: var(--theme-color); padding: 8px 12px; border:1px solid var(--theme-color); border-radius: 4px; font-weight: bold; cursor:pointer; font-size: 0.95em; }
   .masthead-actions a { background: var(--theme-color); color: #000; padding: 8px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 0.95em; border: 1px solid var(--theme-color); }
@@ -2145,6 +2318,13 @@ def dashboard():
     let tickerLastShownTimestamp = null;
     let nodeGPSInfo = """ + node_gps_info_json + """;
     let myGPS = """ + my_gps_json + """;
+    // Override myGPS with manual lat/lon from UI settings if set
+    function getEffectiveMyGPS() {
+      if (uiSettings.myLat !== '' && uiSettings.myLon !== '' && uiSettings.myLat != null && uiSettings.myLon != null) {
+        return { lat: parseFloat(uiSettings.myLat), lon: parseFloat(uiSettings.myLon) };
+      }
+      return myGPS;
+    }
 
     // --- Node Sorting ---
     let nodeSortKey = localStorage.getItem("nodeSortKey") || "name";
@@ -2159,6 +2339,10 @@ def dashboard():
     }
 
     function compareNodes(a, b) {
+      // Favorites always first
+      const aFav = isFavoriteNode(a.id) ? 0 : 1;
+      const bFav = isFavoriteNode(b.id) ? 0 : 1;
+      if (aFav !== bFav) return aFav - bFav;
       // Helper for null/undefined
       function safe(v) { return v === undefined || v === null ? "" : v; }
       // For distance, use haversine if both have GPS, else sort GPS-enabled first
@@ -2226,63 +2410,281 @@ def dashboard():
       themeColor: "#ffa500",
       hueRotateEnabled: false,
       hueRotateSpeed: 10,
+      mapStyle: "carto-light",
       soundEnabled: true,
       soundVolume: 0.7,
-      soundType: "builtin",
-      soundURL: ""
+      soundType: "two-tone",
+      soundTypeDm: "two-tone",
+      soundTypeChannel: "two-tone",
+      soundURL: "",
+      customSounds: {},
+      nodeSounds: {},
+      colorMap: "#ffa500",
+      colorSend: "#ffa500",
+      colorDm: "#ffa500",
+      colorChannel: "#ffa500",
+      colorNodes: "#ffa500",
+      colorDiscord: "#ffa500",
+      myLat: "",
+      myLon: "",
+      channelNames: {}
     };
     let hueRotateInterval = null;
     let currentHue = 0;
     let seenMessageTimestamps = new Set();
     let initialLoadDone = false;
 
-    // --- Built-in notification beep using Web Audio API ---
+    // --- Favorites & Custom Node Names ---
+    function getFavoriteNodes() {
+      try { return JSON.parse(localStorage.getItem('meshapi_favorite_nodes') || '[]'); } catch(e) { return []; }
+    }
+    function setFavoriteNodes(arr) {
+      localStorage.setItem('meshapi_favorite_nodes', JSON.stringify(arr));
+    }
+    function toggleFavoriteNode(nodeId) {
+      let favs = getFavoriteNodes();
+      const nid = String(nodeId);
+      if (favs.includes(nid)) favs = favs.filter(f => f !== nid);
+      else favs.push(nid);
+      setFavoriteNodes(favs);
+      updateNodesUI(allNodes, false);
+    }
+    function isFavoriteNode(nodeId) {
+      return getFavoriteNodes().includes(String(nodeId));
+    }
+    function getCustomNodeNames() {
+      try { return JSON.parse(localStorage.getItem('meshapi_custom_node_names') || '{}'); } catch(e) { return {}; }
+    }
+    function setCustomNodeName(nodeId, name) {
+      let names = getCustomNodeNames();
+      if (name && name.trim()) names[String(nodeId)] = name.trim();
+      else delete names[String(nodeId)];
+      localStorage.setItem('meshapi_custom_node_names', JSON.stringify(names));
+      updateNodesUI(allNodes, false);
+    }
+    function getCustomNodeName(nodeId) {
+      return (getCustomNodeNames())[String(nodeId)] || '';
+    }
+    function promptCustomNodeName(nodeId, currentName) {
+      const name = prompt('Set a custom name for this node (leave blank to clear):', currentName || '');
+      if (name !== null) setCustomNodeName(nodeId, name);
+    }
+
+    // --- Built-in notification sounds using Web Audio API ---
     let audioCtx = null;
     function getAudioCtx() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       return audioCtx;
     }
-    function playBuiltinBeep(volume) {
+    function playTone(ctx, freq, startTime, duration, vol, type) {
+      const g = ctx.createGain();
+      g.connect(ctx.destination);
+      g.gain.setValueAtTime(vol * 0.3, startTime);
+      g.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+      const o = ctx.createOscillator();
+      o.type = type || 'sine';
+      o.frequency.setValueAtTime(freq, startTime);
+      o.connect(g);
+      o.start(startTime);
+      o.stop(startTime + duration);
+    }
+    // Sound: Two-tone beep (original)
+    function playBeepTwoTone(vol) {
+      try {
+        const ctx = getAudioCtx();
+        if (ctx.state === 'suspended') ctx.resume();
+        playTone(ctx, 880, ctx.currentTime, 0.15, vol, 'sine');
+        playTone(ctx, 1320, ctx.currentTime + 0.15, 0.4, vol, 'sine');
+      } catch (e) { console.warn('Sound failed:', e); }
+    }
+    // Sound: Triple chirp
+    function playTripleChirp(vol) {
+      try {
+        const ctx = getAudioCtx();
+        if (ctx.state === 'suspended') ctx.resume();
+        playTone(ctx, 1200, ctx.currentTime, 0.1, vol, 'sine');
+        playTone(ctx, 1500, ctx.currentTime + 0.12, 0.1, vol, 'sine');
+        playTone(ctx, 1800, ctx.currentTime + 0.24, 0.15, vol, 'sine');
+      } catch (e) { console.warn('Sound failed:', e); }
+    }
+    // Sound: Alert chime
+    function playAlertChime(vol) {
+      try {
+        const ctx = getAudioCtx();
+        if (ctx.state === 'suspended') ctx.resume();
+        playTone(ctx, 523, ctx.currentTime, 0.2, vol, 'triangle');
+        playTone(ctx, 659, ctx.currentTime + 0.2, 0.2, vol, 'triangle');
+        playTone(ctx, 784, ctx.currentTime + 0.4, 0.3, vol, 'triangle');
+      } catch (e) { console.warn('Sound failed:', e); }
+    }
+    // Sound: Sonar ping
+    function playSonarPing(vol) {
       try {
         const ctx = getAudioCtx();
         if (ctx.state === 'suspended') ctx.resume();
         const g = ctx.createGain();
         g.connect(ctx.destination);
-        g.gain.setValueAtTime(volume * 0.3, ctx.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-        // Two-tone notification: 880Hz then 1320Hz
-        const o1 = ctx.createOscillator();
-        o1.type = 'sine';
-        o1.frequency.setValueAtTime(880, ctx.currentTime);
-        o1.connect(g);
-        o1.start(ctx.currentTime);
-        o1.stop(ctx.currentTime + 0.15);
-        const g2 = ctx.createGain();
-        g2.connect(ctx.destination);
-        g2.gain.setValueAtTime(volume * 0.3, ctx.currentTime + 0.15);
-        g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.55);
-        const o2 = ctx.createOscillator();
-        o2.type = 'sine';
-        o2.frequency.setValueAtTime(1320, ctx.currentTime + 0.15);
-        o2.connect(g2);
-        o2.start(ctx.currentTime + 0.15);
-        o2.stop(ctx.currentTime + 0.55);
-      } catch (e) { console.warn('Beep failed:', e); }
+        g.gain.setValueAtTime(vol * 0.4, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(1000, ctx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(500, ctx.currentTime + 0.8);
+        o.connect(g);
+        o.start(ctx.currentTime);
+        o.stop(ctx.currentTime + 0.8);
+      } catch (e) { console.warn('Sound failed:', e); }
+    }
+    // Sound: Radio blip
+    function playRadioBlip(vol) {
+      try {
+        const ctx = getAudioCtx();
+        if (ctx.state === 'suspended') ctx.resume();
+        playTone(ctx, 600, ctx.currentTime, 0.08, vol, 'square');
+        playTone(ctx, 800, ctx.currentTime + 0.1, 0.08, vol, 'square');
+      } catch (e) { console.warn('Sound failed:', e); }
     }
 
-    function playIncomingSound() {
-      if (!uiSettings.soundEnabled) return;
-      const vol = uiSettings.soundVolume || 0.7;
-      if (uiSettings.soundType === 'custom' && uiSettings.soundURL) {
+    const builtinSounds = {
+      'two-tone': playBeepTwoTone,
+      'triple-chirp': playTripleChirp,
+      'alert-chime': playAlertChime,
+      'sonar-ping': playSonarPing,
+      'radio-blip': playRadioBlip
+    };
+
+    function playSoundByType(type, vol) {
+      // Check custom sounds library first (type starts with 'custom:')
+      if (type && type.startsWith('custom:')) {
+        const customName = type.slice(7);
+        const customData = (uiSettings.customSounds || {})[customName];
+        if (customData) {
+          const audio = new Audio(customData);
+          audio.volume = vol;
+          audio.play().catch(e => console.warn('Custom sound play blocked:', e));
+          return;
+        }
+      }
+      // Legacy single custom sound
+      if (type === 'custom' && uiSettings.soundURL) {
         let audio = document.getElementById('incomingSound');
         if (audio && audio.src) {
           audio.volume = vol;
           audio.currentTime = 0;
           audio.play().catch(e => console.warn('Sound play blocked:', e));
         }
+      } else if (builtinSounds[type]) {
+        builtinSounds[type](vol);
       } else {
-        playBuiltinBeep(vol);
+        playBeepTwoTone(vol);
       }
+    }
+    function getSoundOptionsList() {
+      const opts = [
+        { value: 'two-tone', label: 'Two-Tone Beep' },
+        { value: 'triple-chirp', label: 'Triple Chirp' },
+        { value: 'alert-chime', label: 'Alert Chime' },
+        { value: 'sonar-ping', label: 'Sonar Ping' },
+        { value: 'radio-blip', label: 'Radio Blip' }
+      ];
+      Object.keys(uiSettings.customSounds || {}).forEach(name => {
+        opts.push({ value: 'custom:' + name, label: '🎵 ' + name });
+      });
+      return opts;
+    }
+    function populateSoundSelect(selEl, selectedVal) {
+      const prev = selEl.value;
+      selEl.innerHTML = '';
+      getSoundOptionsList().forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.value; opt.textContent = o.label;
+        selEl.appendChild(opt);
+      });
+      selEl.value = selectedVal || prev || 'two-tone';
+      if (!selEl.value) selEl.value = 'two-tone';
+    }
+    function refreshAllSoundSelects() {
+      const ids = ['soundTypeSelect','soundTypeDmSelect','soundTypeChannelSelect'];
+      ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) populateSoundSelect(el, el.value);
+      });
+      // Refresh per-node sound dropdowns too
+      document.querySelectorAll('#nodeSoundEntries .node-sound-type').forEach(sel => {
+        populateSoundSelect(sel, sel.value);
+      });
+    }
+    function renderCustomSoundsLibrary() {
+      const container = document.getElementById('customSoundsLibrary');
+      if (!container) return;
+      container.innerHTML = '';
+      const cs = uiSettings.customSounds || {};
+      Object.keys(cs).forEach(name => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:4px;';
+        const label = document.createElement('span');
+        label.textContent = '🎵 ' + name;
+        label.style.cssText = 'flex:1;color:#ccc;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        const testBtn = document.createElement('button');
+        testBtn.textContent = '▶'; testBtn.title = 'Test';
+        testBtn.style.cssText = 'background:#333;color:#fff;border:1px solid #555;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.85em;';
+        testBtn.onclick = () => { const vol = parseFloat(document.getElementById('soundVolume').value)||0.7; playSoundByType('custom:'+name, vol); };
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '✕'; delBtn.title = 'Remove';
+        delBtn.style.cssText = 'background:#611;color:#fff;border:1px solid #933;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.85em;';
+        delBtn.onclick = () => { delete uiSettings.customSounds[name]; saveUISettings(); renderCustomSoundsLibrary(); refreshAllSoundSelects(); };
+        row.appendChild(label); row.appendChild(testBtn); row.appendChild(delBtn);
+        container.appendChild(row);
+      });
+      if (Object.keys(cs).length === 0) {
+        container.innerHTML = '<p style="color:#666;font-size:0.8em;margin:0;">No custom sounds uploaded yet.</p>';
+      }
+    }
+    function uploadCustomSound() {
+      const fileInput = document.getElementById('customSoundUpload');
+      if (!fileInput || !fileInput.files.length) { alert('Please select an audio file first.'); return; }
+      const file = fileInput.files[0];
+      const name = file.name.replace(/\\.[^.]+$/, '');
+      if (!uiSettings.customSounds) uiSettings.customSounds = {};
+      // Convert to base64 data URL for persistence in localStorage
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        uiSettings.customSounds[name] = e.target.result;
+        saveUISettings();
+        renderCustomSoundsLibrary();
+        refreshAllSoundSelects();
+        fileInput.value = '';
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function playIncomingSound(isDm, nodeId) {
+      if (!uiSettings.soundEnabled) return;
+      const vol = uiSettings.soundVolume || 0.7;
+      // Per-node override
+      if (nodeId && uiSettings.nodeSounds && uiSettings.nodeSounds[String(nodeId)]) {
+        playSoundByType(uiSettings.nodeSounds[String(nodeId)], vol);
+        return;
+      }
+      // Per-type sound
+      if (isDm) {
+        playSoundByType(uiSettings.soundTypeDm || uiSettings.soundType || 'two-tone', vol);
+      } else {
+        playSoundByType(uiSettings.soundTypeChannel || uiSettings.soundType || 'two-tone', vol);
+      }
+    }
+
+    function testSelectedSound() {
+      const sel = document.getElementById('soundTypeSelect');
+      const vol = parseFloat(document.getElementById('soundVolume').value) || 0.7;
+      const type = sel ? sel.value : 'two-tone';
+      playSoundByType(type, vol);
+    }
+    function testSoundSelect(selId) {
+      const sel = document.getElementById(selId);
+      const vol = parseFloat(document.getElementById('soundVolume').value) || 0.7;
+      const type = sel ? sel.value : 'two-tone';
+      playSoundByType(type, vol);
     }
 
     function checkForNewMessages(messages) {
@@ -2291,18 +2693,33 @@ def dashboard():
         initialLoadDone = true;
         return;
       }
-      let hasNew = false;
+      let latestNewMsg = null;
       messages.forEach(m => {
         if (!seenMessageTimestamps.has(m.timestamp)) {
           seenMessageTimestamps.add(m.timestamp);
-          // Only beep for inbound messages, not outgoing
           if (m.node !== 'WebUI' && m.node !== 'Discord' && m.node !== 'Twilio' &&
               m.node !== 'DiscordPoll') {
-            hasNew = true;
+            playIncomingSound(!!m.direct, m.node_id);
+            latestNewMsg = m;
           }
         }
       });
-      if (hasNew) playIncomingSound();
+      // For the most recent new message, fly map to sender and open reply UI
+      try {
+        if (latestNewMsg && latestNewMsg.node_id) {
+          let nid = String(latestNewMsg.node_id);
+          // Fly to the node on map if it has a marker
+          if (nodeMarkerLookup[nid]) {
+            flyToNode(nid);
+          }
+          // Open reply box: DM box on map for DMs, or scroll to send form for channels
+          if (latestNewMsg.direct) {
+            let node = allNodes.find(n => String(n.id) === nid);
+            let shortName = node ? (node.shortName || nid) : nid;
+            openMapDm(nid, shortName);
+          }
+        }
+      } catch(e) { console.warn('Map fly/reply error:', e); }
     }
 
     function toggleMode(force) {
@@ -2321,24 +2738,25 @@ def dashboard():
       });
       const settingsBtn = document.getElementById('settingsFloatBtn');
       const settingsPanel = document.getElementById('settingsPanel');
-  // Ensure hidden state by default
+      const settingsOverlay = document.getElementById('settingsOverlay');
   settingsPanel.classList.remove('open');
   settingsBtn.textContent = "Show UI Settings";
+      function openSettings() {
+        settingsPanel.classList.add('open');
+        settingsOverlay.classList.add('open');
+        settingsBtn.textContent = 'Hide UI Settings';
+        updateSectionVisibilityCheckboxes();
+      }
+      function closeSettings() {
+        settingsPanel.classList.remove('open');
+        settingsOverlay.classList.remove('open');
+        settingsBtn.textContent = 'Show UI Settings';
+      }
       settingsBtn.addEventListener('click', function(e) {
         e.preventDefault();
-        const opening = !settingsPanel.classList.contains('open');
-        if (opening) {
-          settingsPanel.classList.add('open');
-          this.textContent = 'Hide UI Settings';
-          // After opening, scroll the page to the bottom to reveal all settings
-          requestAnimationFrame(() => {
-            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-          });
-        } else {
-          settingsPanel.classList.remove('open');
-          this.textContent = 'Show UI Settings';
-        }
+        settingsPanel.classList.contains('open') ? closeSettings() : openSettings();
       });
+      settingsOverlay.addEventListener('click', closeSettings);
       document.getElementById('nodeSearch').addEventListener('input', function() {
         filterNodes(this.value, false);
       });
@@ -2361,15 +2779,55 @@ def dashboard():
       document.getElementById('uiColorPicker').value = uiSettings.themeColor;
       document.getElementById('hueRotateEnabled').checked = uiSettings.hueRotateEnabled;
       document.getElementById('hueRotateSpeed').value = uiSettings.hueRotateSpeed;
-      document.getElementById('soundURL').value = uiSettings.soundURL;
+      document.getElementById('mapStyleSelect').value = uiSettings.mapStyle || 'carto-light';
+      // Populate map style select
+      (function() {
+        const msel = document.getElementById('mapStyleSelect');
+        msel.innerHTML = '';
+        Object.keys(mapTileProviders).forEach(k => {
+          const o = document.createElement('option');
+          o.value = k; o.textContent = mapTileProviders[k].name;
+          msel.appendChild(o);
+        });
+        msel.value = uiSettings.mapStyle || 'carto-light';
+      })();
+      // Populate offline map bounds from saved data
+      (function() {
+        const offData = getOfflineMapData();
+        if (offData && offData.bounds) {
+          document.getElementById('offlineMapNorth').value = offData.bounds.north;
+          document.getElementById('offlineMapSouth').value = offData.bounds.south;
+          document.getElementById('offlineMapWest').value = offData.bounds.west;
+          document.getElementById('offlineMapEast').value = offData.bounds.east;
+        }
+      })();
+      // Populate sound selects with built-in + custom sounds
+      populateSoundSelect(document.getElementById('soundTypeSelect'), uiSettings.soundType || 'two-tone');
+      populateSoundSelect(document.getElementById('soundTypeDmSelect'), uiSettings.soundTypeDm || 'two-tone');
+      populateSoundSelect(document.getElementById('soundTypeChannelSelect'), uiSettings.soundTypeChannel || 'two-tone');
+      // Render custom sounds library
+      renderCustomSoundsLibrary();
       document.getElementById('soundEnabled').checked = uiSettings.soundEnabled !== false;
       document.getElementById('soundVolume').value = uiSettings.soundVolume || 0.7;
       document.getElementById('soundVolumeVal').textContent = Math.round((uiSettings.soundVolume || 0.7) * 100) + '%';
-      document.getElementById('soundTypeSelect').value = uiSettings.soundType || 'builtin';
-      document.getElementById('customSoundRow').style.display = (uiSettings.soundType === 'custom') ? 'block' : 'none';
+      // Render per-node sound entries
+      renderNodeSoundEntries();
+      // Set section color pickers
+      document.getElementById('colorMapPicker').value = uiSettings.colorMap || '#ffa500';
+      document.getElementById('colorSendPicker').value = uiSettings.colorSend || '#ffa500';
+      document.getElementById('colorDmPicker').value = uiSettings.colorDm || '#ffa500';
+      document.getElementById('colorChannelPicker').value = uiSettings.colorChannel || '#ffa500';
+      document.getElementById('colorNodesPicker').value = uiSettings.colorNodes || '#ffa500';
+      document.getElementById('colorDiscordPicker').value = uiSettings.colorDiscord || '#ffa500';
+      // Set manual GPS fields
+      document.getElementById('myLatInput').value = uiSettings.myLat || '';
+      document.getElementById('myLonInput').value = uiSettings.myLon || '';
+      // Populate channel names list
+      populateChannelNamesList();
 
       // Apply settings on load
       applyThemeColor(uiSettings.themeColor);
+      applySectionColors();
       if (uiSettings.hueRotateEnabled) startHueRotate(uiSettings.hueRotateSpeed);
       setIncomingSound(uiSettings.soundURL);
 
@@ -2379,19 +2837,12 @@ def dashboard():
         uiSettings.themeColor = document.getElementById('uiColorPicker').value;
         uiSettings.hueRotateEnabled = document.getElementById('hueRotateEnabled').checked;
         uiSettings.hueRotateSpeed = parseFloat(document.getElementById('hueRotateSpeed').value);
+        // Map style
+        uiSettings.mapStyle = document.getElementById('mapStyleSelect').value;
         // Sound settings
         uiSettings.soundEnabled = document.getElementById('soundEnabled').checked;
         uiSettings.soundVolume = parseFloat(document.getElementById('soundVolume').value);
         uiSettings.soundType = document.getElementById('soundTypeSelect').value;
-        // For soundURL, only allow local file path from file input
-        var fileInput = document.getElementById('soundFile');
-        if (fileInput && fileInput.files.length > 0) {
-          var file = fileInput.files[0];
-          var url = URL.createObjectURL(file);
-          uiSettings.soundURL = url;
-          document.getElementById('soundURL').value = file.name;
-        }
-        saveUISettings();
         applyThemeColor(uiSettings.themeColor);
         if (uiSettings.hueRotateEnabled) {
           startHueRotate(uiSettings.hueRotateSpeed);
@@ -2399,23 +2850,35 @@ def dashboard():
           stopHueRotate();
         }
         setIncomingSound(uiSettings.soundURL);
+        applyMapTileLayer();
+        // DM / Channel sound types
+        uiSettings.soundTypeDm = document.getElementById('soundTypeDmSelect').value;
+        uiSettings.soundTypeChannel = document.getElementById('soundTypeChannelSelect').value;
+        // Per-node sounds
+        uiSettings.nodeSounds = collectNodeSoundEntries();
+        // Section colors
+        uiSettings.colorMap = document.getElementById('colorMapPicker').value;
+        uiSettings.colorSend = document.getElementById('colorSendPicker').value;
+        uiSettings.colorDm = document.getElementById('colorDmPicker').value;
+        uiSettings.colorChannel = document.getElementById('colorChannelPicker').value;
+        uiSettings.colorNodes = document.getElementById('colorNodesPicker').value;
+        uiSettings.colorDiscord = document.getElementById('colorDiscordPicker').value;
+        applySectionColors();
+        // Manual GPS
+        uiSettings.myLat = document.getElementById('myLatInput').value;
+        uiSettings.myLon = document.getElementById('myLonInput').value;
+        // Channel name overrides
+        let chOverrides = {};
+        document.querySelectorAll('#channelNamesList input[data-ch]').forEach(inp => {
+          const ch = inp.getAttribute('data-ch');
+          const v = inp.value.trim();
+          if (v) chOverrides[ch] = v;
+        });
+        uiSettings.channelNames = chOverrides;
         // Save timezone offset
         setTimezoneOffset(document.getElementById('timezoneSelect').value);
-        // Keep Apply button visible after changes
-        const sticky = document.querySelector('.sticky-actions');
-        if (sticky) sticky.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        saveUISettings();
         fetchMessagesAndNodes();
-      });
-
-      // Listen for file input change to update sound preview
-      document.getElementById('soundFile').addEventListener('change', function() {
-        if (this.files.length > 0) {
-          var file = this.files[0];
-          var url = URL.createObjectURL(file);
-          uiSettings.soundURL = url;
-          document.getElementById('soundURL').value = file.name;
-          setIncomingSound(url);
-        }
       });
 
       // Set initial sort controls
@@ -2429,14 +2892,17 @@ def dashboard():
 
       // --- Init char/chunk counter ---
       initCharChunkCounter();
+
+      // --- Init draggable sections ---
+      initSortableLayout();
     });
 
     // --- UI Settings Functions ---
     function saveUISettings() {
-      // Only persist the file name for sound, not the blob URL
       let settingsToSave = Object.assign({}, uiSettings);
+      // Don't persist blob URLs (they're session-only)
       if (settingsToSave.soundURL && settingsToSave.soundURL.startsWith('blob:')) {
-        settingsToSave.soundURL = document.getElementById('soundURL').value;
+        settingsToSave.soundURL = '';
       }
       localStorage.setItem("meshtastic_ui_settings", JSON.stringify(settingsToSave));
     }
@@ -2452,29 +2918,93 @@ def dashboard():
     function applyThemeColor(color) {
       document.documentElement.style.setProperty('--theme-color', color);
     }
+    function applySectionColors() {
+      const r = document.documentElement.style;
+      r.setProperty('--color-map', uiSettings.colorMap || uiSettings.themeColor);
+      r.setProperty('--color-send', uiSettings.colorSend || uiSettings.themeColor);
+      r.setProperty('--color-dm', uiSettings.colorDm || uiSettings.themeColor);
+      r.setProperty('--color-channel', uiSettings.colorChannel || uiSettings.themeColor);
+      r.setProperty('--color-nodes', uiSettings.colorNodes || uiSettings.themeColor);
+      r.setProperty('--color-discord', uiSettings.colorDiscord || uiSettings.themeColor);
+    }
     function startHueRotate(speed) {
       stopHueRotate();
       hueRotateInterval = setInterval(function() {
         currentHue = (currentHue + 1) % 360;
-        const root = document.getElementById('appRoot') || document.body;
-        root.style.filter = `hue-rotate(${currentHue}deg)`;
-        // Ensure logo overlay tint remains constant (not hue-rotated)
-        const logoOverlay = document.querySelector('.masthead .logo-overlay');
-        if (logoOverlay) {
-          logoOverlay.style.filter = 'none';
-        }
+        const sortable = document.getElementById('sortableContainer');
+        if (sortable) sortable.style.filter = `hue-rotate(${currentHue}deg)`;
       }, Math.max(5, 1000 / Math.max(1, speed)));
     }
     function stopHueRotate() {
       if (hueRotateInterval) clearInterval(hueRotateInterval);
       hueRotateInterval = null;
-      const root = document.getElementById('appRoot') || document.body;
-      root.style.filter = "";
+      const sortable = document.getElementById('sortableContainer');
+      if (sortable) sortable.style.filter = '';
       currentHue = 0;
-      const logoOverlay = document.querySelector('.masthead .logo-overlay');
-      if (logoOverlay) {
-        logoOverlay.style.filter = 'none';
+    }
+    // Per-node sound management
+    function renderNodeSoundEntries() {
+      const container = document.getElementById('nodeSoundEntries');
+      if (!container) return;
+      container.innerHTML = '';
+      const ns = uiSettings.nodeSounds || {};
+      Object.keys(ns).forEach(nodeId => {
+        addNodeSoundRow(container, nodeId, ns[nodeId]);
+      });
+    }
+    function addNodeSoundRow(container, nodeId, soundType) {
+      const row = document.createElement('div');
+      row.className = 'node-sound-row';
+      row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:4px;';
+      const inp = document.createElement('select');
+      inp.className = 'node-sound-id';
+      inp.style.cssText = 'flex:1;background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px 6px;font-size:0.85em;';
+      // Blank default option
+      const blankOpt = document.createElement('option');
+      blankOpt.value = ''; blankOpt.textContent = '-- Select Node --';
+      inp.appendChild(blankOpt);
+      // Populate from allNodes
+      (allNodes || []).forEach(n => {
+        const o = document.createElement('option');
+        o.value = n.id;
+        o.textContent = (n.shortName || '') + ' (' + n.id + ')';
+        if (String(n.id) === String(nodeId)) o.selected = true;
+        inp.appendChild(o);
+      });
+      // If nodeId is set but not in allNodes, add it as an option
+      if (nodeId && !Array.from(inp.options).some(o => o.value === String(nodeId))) {
+        const o = document.createElement('option');
+        o.value = nodeId; o.textContent = nodeId; o.selected = true;
+        inp.appendChild(o);
       }
+      const sel = document.createElement('select');
+      sel.className = 'node-sound-type';
+      sel.style.cssText = 'background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;font-size:0.85em;';
+      getSoundOptionsList().forEach(v => {
+        const o = document.createElement('option'); o.value = v.value;
+        o.textContent = v.label;
+        if (v.value === soundType) o.selected = true;
+        sel.appendChild(o);
+      });
+      const testBtn = document.createElement('button');
+      testBtn.textContent = '▶'; testBtn.title = 'Test';
+      testBtn.style.cssText = 'background:#333;color:#fff;border:1px solid #555;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.85em;';
+      testBtn.onclick = () => { const vol = parseFloat(document.getElementById('soundVolume').value)||0.7; playSoundByType(sel.value, vol); };
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '✕'; delBtn.title = 'Remove';
+      delBtn.style.cssText = 'background:#611;color:#fff;border:1px solid #933;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.85em;';
+      delBtn.onclick = () => row.remove();
+      row.appendChild(inp); row.appendChild(sel); row.appendChild(testBtn); row.appendChild(delBtn);
+      container.appendChild(row);
+    }
+    function collectNodeSoundEntries() {
+      const result = {};
+      document.querySelectorAll('#nodeSoundEntries .node-sound-row').forEach(row => {
+        const id = row.querySelector('.node-sound-id').value.trim();
+        const type = row.querySelector('.node-sound-type').value;
+        if (id) result[id] = type;
+      });
+      return result;
     }
     function toggleHueRotate(enabled, speed) {
       uiSettings.hueRotateEnabled = enabled;
@@ -2490,6 +3020,300 @@ def dashboard():
       saveUISettings();
     }
 
+    // --- Draggable section layout ---
+    function initSortableLayout() {
+      const container = document.getElementById('sortableContainer');
+      if (!container || typeof Sortable === 'undefined') return;
+      Sortable.create(container, {
+        handle: '.drag-handle',
+        animation: 150,
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'sortable-chosen',
+        filter: '.col-drag',
+        onEnd: function() {
+          saveSectionOrder();
+        }
+      });
+      loadSectionOrder();
+      // Also make the three columns sortable
+      const colContainer = document.getElementById('threeColContainer');
+      if (colContainer) {
+        Sortable.create(colContainer, {
+          handle: '.col-drag',
+          animation: 150,
+          ghostClass: 'sortable-ghost',
+          chosenClass: 'sortable-chosen',
+          onEnd: function() {
+            saveColumnOrder();
+          }
+        });
+        loadColumnOrder();
+      }
+      // Init map since it's shown by default
+      initNodeMapOnLoad();
+      // Apply hidden sections from saved state
+      applyHiddenSections();
+      updateSectionVisibilityCheckboxes();
+    }
+    const mapTileProviders = {
+      'osm': { name: 'OpenStreetMap', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '&copy; OpenStreetMap contributors', maxZoom: 19 },
+      'carto-light': { name: 'Carto Positron (Light)', url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', attr: '&copy; CARTO &copy; OpenStreetMap', maxZoom: 20 },
+      'carto-dark': { name: 'Carto Dark Matter', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attr: '&copy; CARTO &copy; OpenStreetMap', maxZoom: 20 },
+      'carto-voyager': { name: 'Carto Voyager', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', attr: '&copy; CARTO &copy; OpenStreetMap', maxZoom: 20 },
+      'carto-light-nolabels': { name: 'Carto Light (No Labels)', url: 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', attr: '&copy; CARTO &copy; OpenStreetMap', maxZoom: 20 },
+      'carto-dark-nolabels': { name: 'Carto Dark (No Labels)', url: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', attr: '&copy; CARTO &copy; OpenStreetMap', maxZoom: 20 },
+      'osm-topo': { name: 'OpenTopoMap', url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attr: '&copy; OpenTopoMap &copy; OpenStreetMap', maxZoom: 17 },
+      'esri-world': { name: 'Esri World Street Map', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attr: '&copy; Esri', maxZoom: 19, noSub: true },
+      'esri-satellite': { name: 'Esri World Imagery', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: '&copy; Esri', maxZoom: 18, noSub: true },
+      'esri-topo': { name: 'Esri World Topo', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attr: '&copy; Esri', maxZoom: 19, noSub: true },
+      'esri-natgeo': { name: 'Esri National Geographic', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}', attr: '&copy; Esri &copy; National Geographic', maxZoom: 16, noSub: true },
+      'esri-gray': { name: 'Esri Light Gray Canvas', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', attr: '&copy; Esri', maxZoom: 16, noSub: true },
+      'esri-darkgray': { name: 'Esri Dark Gray Canvas', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', attr: '&copy; Esri', maxZoom: 16, noSub: true },
+      'esri-ocean': { name: 'Esri Ocean Basemap', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}', attr: '&copy; Esri', maxZoom: 13, noSub: true },
+      'stamen-terrain': { name: 'Stadia Stamen Terrain', url: 'https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png', attr: '&copy; Stadia Maps &copy; Stamen Design &copy; OpenStreetMap', maxZoom: 18, noSub: true },
+      'stamen-toner': { name: 'Stadia Stamen Toner', url: 'https://tiles.stadiamaps.com/tiles/stamen_toner/{z}/{x}/{y}{r}.png', attr: '&copy; Stadia Maps &copy; Stamen Design &copy; OpenStreetMap', maxZoom: 20, noSub: true },
+      'stamen-toner-lite': { name: 'Stadia Stamen Toner Lite', url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}{r}.png', attr: '&copy; Stadia Maps &copy; Stamen Design &copy; OpenStreetMap', maxZoom: 20, noSub: true },
+      'stamen-watercolor': { name: 'Stadia Stamen Watercolor', url: 'https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg', attr: '&copy; Stadia Maps &copy; Stamen Design &copy; OpenStreetMap', maxZoom: 16, noSub: true },
+      'stadia-alidade': { name: 'Stadia Alidade Smooth', url: 'https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png', attr: '&copy; Stadia Maps &copy; OpenStreetMap', maxZoom: 20, noSub: true },
+      'stadia-alidade-dark': { name: 'Stadia Alidade Dark', url: 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', attr: '&copy; Stadia Maps &copy; OpenStreetMap', maxZoom: 20, noSub: true },
+      'stadia-outdoors': { name: 'Stadia Outdoors', url: 'https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png', attr: '&copy; Stadia Maps &copy; OpenStreetMap', maxZoom: 20, noSub: true },
+      'stadia-osm-bright': { name: 'Stadia OSM Bright', url: 'https://tiles.stadiamaps.com/tiles/osm_bright/{z}/{x}/{y}{r}.png', attr: '&copy; Stadia Maps &copy; OpenStreetMap', maxZoom: 20, noSub: true },
+      'osm-humanitarian': { name: 'Humanitarian OSM', url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', attr: '&copy; OpenStreetMap contributors, HOT', maxZoom: 19 },
+      'osm-cycle': { name: 'CyclOSM (Cycling)', url: 'https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', attr: '&copy; CyclOSM &copy; OpenStreetMap', maxZoom: 20 },
+      'osm-opnv': { name: 'OPNVKarte (Transport)', url: 'https://tileserver.memomaps.de/tilegen/{z}/{x}/{y}.png', attr: '&copy; OpenStreetMap &copy; memomaps.de', maxZoom: 18, noSub: true },
+      'offline-image': { name: '📴 Offline Image', offline: true }
+    };
+    function getMapTileConfig() {
+      const style = uiSettings.mapStyle || 'carto-light';
+      return mapTileProviders[style] || mapTileProviders['carto-light'];
+    }
+    let currentTileLayer = null;
+    let currentOfflineOverlay = null;
+    function applyMapTileLayer() {
+      if (!nodeMapInstance) return;
+      const cfg = getMapTileConfig();
+      if (currentTileLayer) { nodeMapInstance.removeLayer(currentTileLayer); currentTileLayer = null; }
+      if (currentOfflineOverlay) { nodeMapInstance.removeLayer(currentOfflineOverlay); currentOfflineOverlay = null; }
+      if (cfg.offline) {
+        // Offline image overlay mode
+        const offData = getOfflineMapData();
+        if (offData && offData.image && offData.bounds) {
+          const b = offData.bounds;
+          const imgBounds = [[b.south, b.west], [b.north, b.east]];
+          currentOfflineOverlay = L.imageOverlay(offData.image, imgBounds).addTo(nodeMapInstance);
+          nodeMapInstance.fitBounds(imgBounds);
+        } else {
+          alert('No offline map image configured. Upload one in Settings > Offline Map Image.');
+          // Fallback to default
+          uiSettings.mapStyle = 'carto-light';
+          applyMapTileLayer();
+          return;
+        }
+      } else {
+        const tileOpts = { attribution: cfg.attr, maxZoom: cfg.maxZoom || 19, errorTileUrl: '' };
+        if (!cfg.noSub) tileOpts.subdomains = 'abc';
+        currentTileLayer = L.tileLayer(cfg.url, tileOpts).addTo(nodeMapInstance);
+      }
+      updateMapOfflineNotice();
+    }
+    function getOfflineMapData() {
+      try { return JSON.parse(localStorage.getItem('meshapi_offline_map') || 'null'); } catch(e) { return null; }
+    }
+    function uploadOfflineMapImage() {
+      const fileInput = document.getElementById('offlineMapUpload');
+      const north = parseFloat(document.getElementById('offlineMapNorth').value);
+      const south = parseFloat(document.getElementById('offlineMapSouth').value);
+      const west = parseFloat(document.getElementById('offlineMapWest').value);
+      const east = parseFloat(document.getElementById('offlineMapEast').value);
+      if (!fileInput || !fileInput.files.length) { alert('Select a map image file first.'); return; }
+      if (isNaN(north) || isNaN(south) || isNaN(west) || isNaN(east)) { alert('Please fill in all four lat/lon bounds.'); return; }
+      if (north <= south) { alert('North latitude must be greater than South.'); return; }
+      if (east <= west) { alert('East longitude must be greater than West.'); return; }
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = { image: e.target.result, bounds: { north, south, west, east } };
+        try {
+          localStorage.setItem('meshapi_offline_map', JSON.stringify(data));
+          alert('Offline map image saved! Select "Offline Image" in Map Style to use it.');
+          fileInput.value = '';
+        } catch(err) {
+          alert('Failed to save — image may be too large for localStorage. Try a smaller/compressed image.');
+        }
+      };
+      reader.readAsDataURL(fileInput.files[0]);
+    }
+    function clearOfflineMapImage() {
+      localStorage.removeItem('meshapi_offline_map');
+      document.getElementById('offlineMapNorth').value = '';
+      document.getElementById('offlineMapSouth').value = '';
+      document.getElementById('offlineMapWest').value = '';
+      document.getElementById('offlineMapEast').value = '';
+      if (uiSettings.mapStyle === 'offline-image') {
+        uiSettings.mapStyle = 'carto-light';
+        if (nodeMapInstance) applyMapTileLayer();
+      }
+      alert('Offline map image cleared.');
+    }
+    function updateMapOfflineNotice() {
+      let notice = document.getElementById('mapOfflineNotice');
+      if (!navigator.onLine) {
+        if (!notice) {
+          notice = document.createElement('div');
+          notice.id = 'mapOfflineNotice';
+          notice.style.cssText = 'position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:1000;background:rgba(0,0,0,0.85);color:#ffa500;padding:8px 16px;border-radius:6px;border:1px solid #ffa500;font-size:0.85em;pointer-events:none;';
+          notice.textContent = '📡 Offline — Map tiles unavailable. Node positions still shown.';
+          const mapEl = document.getElementById('nodeMap');
+          if (mapEl) mapEl.style.position = 'relative';
+          if (mapEl) mapEl.appendChild(notice);
+        }
+        notice.style.display = 'block';
+      } else if (notice) {
+        notice.style.display = 'none';
+      }
+    }
+    window.addEventListener('online', function() { updateMapOfflineNotice(); if (nodeMapInstance) applyMapTileLayer(); });
+    window.addEventListener('offline', updateMapOfflineNotice);
+    function initNodeMapOnLoad() {
+      const panel = document.getElementById('nodeMapPanel');
+      if (panel && !panel.classList.contains('collapsed')) {
+        setTimeout(function() {
+          if (!nodeMapInstance) {
+            nodeMapInstance = L.map('nodeMap').setView([0, 0], 2);
+            nodeMapInstance.on('zoomstart dragstart', function() { mapUserInteracted = true; });
+            applyMapTileLayer();
+          }
+          nodeMapInstance.invalidateSize();
+          updateNodeMap();
+          // Second invalidateSize after flex layout fully settles
+          setTimeout(function() {
+            if (nodeMapInstance) nodeMapInstance.invalidateSize();
+          }, 500);
+        }, 300);
+      }
+    }
+    function saveSectionOrder() {
+      const container = document.getElementById('sortableContainer');
+      if (!container) return;
+      const order = Array.from(container.children)
+        .map(el => el.getAttribute('data-section'))
+        .filter(Boolean);
+      localStorage.setItem('meshtastic_layout_order', JSON.stringify(order));
+    }
+    function loadSectionOrder() {
+      try {
+        const saved = localStorage.getItem('meshtastic_layout_order');
+        if (!saved) return;
+        const order = JSON.parse(saved);
+        const container = document.getElementById('sortableContainer');
+        if (!container || !Array.isArray(order)) return;
+        order.forEach(sectionId => {
+          const el = container.querySelector('[data-section="' + sectionId + '"]');
+          if (el) container.appendChild(el);
+        });
+      } catch (e) { console.warn('Failed to load layout:', e); }
+    }
+    function saveColumnOrder() {
+      const container = document.getElementById('threeColContainer');
+      if (!container) return;
+      const order = Array.from(container.children)
+        .map(el => el.getAttribute('data-col'))
+        .filter(Boolean);
+      localStorage.setItem('meshtastic_col_order', JSON.stringify(order));
+    }
+    function loadColumnOrder() {
+      try {
+        const saved = localStorage.getItem('meshtastic_col_order');
+        if (!saved) return;
+        const order = JSON.parse(saved);
+        const container = document.getElementById('threeColContainer');
+        if (!container || !Array.isArray(order)) return;
+        order.forEach(colId => {
+          const el = container.querySelector('[data-col="' + colId + '"]');
+          if (el) container.appendChild(el);
+        });
+      } catch (e) { console.warn('Failed to load col order:', e); }
+    }
+
+    function scrollToSend() {
+      const sf = document.getElementById('sendForm');
+      if (sf) sf.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(function() { const mb = document.getElementById('messageBox'); if (mb) mb.focus(); }, 400);
+    }
+
+    // --- Section Hide/Show ---
+    function getHiddenSections() {
+      try {
+        let saved = localStorage.getItem('meshtastic_hidden_sections');
+        return saved ? JSON.parse(saved) : [];
+      } catch(e) { return []; }
+    }
+    function saveHiddenSections(arr) {
+      localStorage.setItem('meshtastic_hidden_sections', JSON.stringify(arr));
+    }
+    function hideSection(sectionId) {
+      let el = document.querySelector('#sortableContainer [data-section="' + sectionId + '"]');
+      if (el) el.style.display = 'none';
+      let hidden = getHiddenSections();
+      if (!hidden.includes(sectionId)) hidden.push(sectionId);
+      saveHiddenSections(hidden);
+      updateSectionVisibilityCheckboxes();
+    }
+    function showSection(sectionId) {
+      let el = document.querySelector('#sortableContainer [data-section="' + sectionId + '"]');
+      if (el) {
+        el.style.display = '';
+        // Special case: discord is hidden by default
+        if (sectionId === 'discordSection') {
+          let inner = el.querySelector('#discordSection');
+          if (inner) inner.style.display = 'block';
+        }
+      }
+      let hidden = getHiddenSections();
+      hidden = hidden.filter(s => s !== sectionId);
+      saveHiddenSections(hidden);
+      // Re-init map if showing map panel
+      if (sectionId === 'nodeMapPanel') {
+        setTimeout(function() { initNodeMapOnLoad(); }, 200);
+      }
+      updateSectionVisibilityCheckboxes();
+    }
+    function applyHiddenSections() {
+      let hidden = getHiddenSections();
+      hidden.forEach(function(sectionId) {
+        let el = document.querySelector('#sortableContainer [data-section="' + sectionId + '"]');
+        if (el) el.style.display = 'none';
+      });
+    }
+    const SECTION_LABELS = {
+      nodeMapPanel: '🗺️ Node Map',
+      sendForm: '✉️ Send a Message',
+      threeCol: '💬 Message Panels',
+      discordSection: '🎮 Discord Messages'
+    };
+    function updateSectionVisibilityCheckboxes() {
+      let container = document.getElementById('sectionVisibilityList');
+      if (!container) return;
+      container.innerHTML = '';
+      let hidden = getHiddenSections();
+      Object.keys(SECTION_LABELS).forEach(function(sid) {
+        let row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px;';
+        let cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !hidden.includes(sid);
+        cb.onchange = function() {
+          if (this.checked) showSection(sid);
+          else hideSection(sid);
+        };
+        let lbl = document.createElement('label');
+        lbl.textContent = SECTION_LABELS[sid];
+        lbl.style.color = '#fff';
+        row.appendChild(cb);
+        row.appendChild(lbl);
+        container.appendChild(row);
+      });
+    }
+
     function replyToMessage(mode, target) {
       toggleMode(mode);
       if (mode === 'direct') {
@@ -2503,13 +3327,13 @@ def dashboard():
         document.getElementById('messageBox').value = '';
       }
       updateCharCounter();
+      scrollToSend();
     }
 
     function dmToNode(nodeId, shortName, replyToTs) {
       toggleMode('direct');
       document.getElementById('destNode').value = nodeId;
       if (replyToTs) {
-        // Prefill with quoted message if replying to a thread
         let threadMsg = allMessages.find(m => m.timestamp === replyToTs);
         let quoted = threadMsg ? `> ${threadMsg.message}\n` : '';
         document.getElementById('messageBox').value = quoted + '@' + shortName + ': ';
@@ -2517,6 +3341,7 @@ def dashboard():
         document.getElementById('messageBox').value = '@' + shortName + ': ';
       }
       updateCharCounter();
+      scrollToSend();
     }
 
     function replyToLastDM() {
@@ -2535,6 +3360,7 @@ def dashboard():
         document.getElementById('channelSel').value = lastChannelTarget;
         document.getElementById('messageBox').value = '';
         updateCharCounter();
+        scrollToSend();
       } else {
         alert("No broadcast channel target available.");
       }
@@ -2676,7 +3502,47 @@ def dashboard():
     }
 
     // Data fetch & UI updates
-    const CHANNEL_NAMES = """ + json.dumps(channel_names) + """;
+    let CHANNEL_NAMES = """ + json.dumps(channel_names) + """;
+    // Override with UI-renamed channels from settings
+    function getChannelName(ch) {
+      if (uiSettings.channelNames && uiSettings.channelNames[String(ch)]) return uiSettings.channelNames[String(ch)];
+      return CHANNEL_NAMES[String(ch)] || 'Channel ' + ch;
+    }
+    // Pull channel names from the connected node
+    async function fetchNodeChannels() {
+      try {
+        const r = await fetch('/api/channels');
+        if (!r.ok) return;
+        const data = await r.json();
+        if (data && Object.keys(data).length > 0) {
+          Object.keys(data).forEach(k => {
+            if (data[k] && !CHANNEL_NAMES[k]) CHANNEL_NAMES[k] = data[k];
+            else if (data[k] && CHANNEL_NAMES[k] === 'Channel ' + k) CHANNEL_NAMES[k] = data[k];
+          });
+        }
+      } catch(e) { console.log('Could not fetch node channels:', e); }
+    }
+    fetchNodeChannels();
+
+    function populateChannelNamesList() {
+      const container = document.getElementById('channelNamesList');
+      if (!container) return;
+      container.innerHTML = '';
+      // Show channels 0-7 (standard Meshtastic range)
+      for (let i = 0; i <= 7; i++) {
+        const label = document.createElement('label');
+        label.textContent = 'Ch ' + i;
+        label.style.cssText = 'color:#ccc;font-size:0.9em;';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.setAttribute('data-ch', String(i));
+        input.placeholder = CHANNEL_NAMES[i] || ('Channel ' + i);
+        input.value = uiSettings.channelNames && uiSettings.channelNames[String(i)] ? uiSettings.channelNames[String(i)] : '';
+        input.style.cssText = 'background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;width:100%;box-sizing:border-box;';
+        container.appendChild(label);
+        container.appendChild(input);
+      }
+    }
 
     function getNowUTC() {
       return new Date(new Date().toISOString().slice(0, 19) + "Z");
@@ -2716,6 +3582,7 @@ def dashboard():
         highlightRecentNodes(nodes);
         showLatestMessageTicker(msgs);
         updateDiscordMessagesUI(msgs);
+        updateNodeMap();
       } catch (e) { console.error(e); }
     }
 
@@ -2750,30 +3617,228 @@ def dashboard():
       document.getElementById('cfgTab').style.display = (which==='cfg')?'block':'none';
       document.getElementById('cmdTab').style.display = (which==='cmd')?'block':'none';
       document.getElementById('motdTab').style.display = (which==='motd')?'block':'none';
+      document.getElementById('cfgRawTab').style.display = (which==='cfgraw')?'block':'none';
+    }
+    // --- Commands Form Builder ---
+    function addCommandRow(cmd) {
+      const container = document.getElementById('cmdFormRows');
+      const row = document.createElement('div');
+      row.className = 'cmd-form-row';
+      row.style.cssText = 'border:1px solid #333;border-radius:8px;padding:10px;margin-bottom:8px;background:#111;position:relative;';
+      const isAI = cmd && cmd.ai_prompt;
+      row.innerHTML = `
+        <button type="button" onclick="this.parentElement.remove()" style="position:absolute;top:6px;right:8px;background:none;border:none;color:#f66;cursor:pointer;font-size:1.1em;" title="Remove command">&times;</button>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;">
+          <label style="color:#ccc;font-size:0.85em;">Command</label>
+          <input type="text" class="cmd-trigger" value="${cmd ? cmd.command.replace(/"/g,'&quot;') : ''}" placeholder="/mycommand" style="background:#222;color:#0ff;border:1px solid #555;border-radius:4px;padding:4px;font-family:monospace;width:100%;box-sizing:border-box;">
+          <label style="color:#ccc;font-size:0.85em;">Type</label>
+          <select class="cmd-type" onchange="cmdTypeChanged(this)" style="background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px;">
+            <option value="static" ${!isAI ? 'selected' : ''}>Static Response</option>
+            <option value="ai" ${isAI ? 'selected' : ''}>AI Prompt</option>
+          </select>
+          <label style="color:#ccc;font-size:0.85em;" class="cmd-resp-label">${isAI ? 'AI Prompt' : 'Response'}</label>
+          <textarea class="cmd-resp-value" rows="2" placeholder="${isAI ? 'Give me a fun fact about {user_input}' : 'Pong!'}" style="background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px;font-family:monospace;width:100%;box-sizing:border-box;resize:vertical;">${cmd ? (isAI ? cmd.ai_prompt : cmd.response || '').replace(/</g,'&lt;') : ''}</textarea>
+          <label style="color:#ccc;font-size:0.85em;">Description</label>
+          <input type="text" class="cmd-desc" value="${cmd ? (cmd.description || '').replace(/"/g,'&quot;') : ''}" placeholder="What does this command do?" style="background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px;width:100%;box-sizing:border-box;">
+        </div>`;
+      container.appendChild(row);
+    }
+    function cmdTypeChanged(sel) {
+      const row = sel.closest('.cmd-form-row');
+      const label = row.querySelector('.cmd-resp-label');
+      const textarea = row.querySelector('.cmd-resp-value');
+      if (sel.value === 'ai') {
+        label.textContent = 'AI Prompt';
+        textarea.placeholder = 'Give me a fun fact about {user_input}';
+      } else {
+        label.textContent = 'Response';
+        textarea.placeholder = 'Pong!';
+      }
+    }
+    function populateCommandForm(cmds) {
+      const container = document.getElementById('cmdFormRows');
+      container.innerHTML = '';
+      if (cmds && cmds.length) {
+        cmds.forEach(c => addCommandRow(c));
+      }
+    }
+    function collectCommandForm() {
+      const rows = document.querySelectorAll('#cmdFormRows .cmd-form-row');
+      const commands = [];
+      rows.forEach(row => {
+        const trigger = row.querySelector('.cmd-trigger').value.trim();
+        if (!trigger) return;
+        const type = row.querySelector('.cmd-type').value;
+        const value = row.querySelector('.cmd-resp-value').value;
+        const desc = row.querySelector('.cmd-desc').value.trim();
+        const obj = { command: trigger, description: desc };
+        if (type === 'ai') obj.ai_prompt = value;
+        else obj.response = value;
+        commands.push(obj);
+      });
+      return { commands: commands };
+    }
+
+    let _loadedConfig = {};
+    function cfgVal(id) { const el = document.getElementById(id); if (!el) return undefined; if (el.type === 'checkbox') return el.checked; if (el.type === 'number') { const v = el.value; return v === '' ? null : Number(v); } return el.value; }
+    function setCfgVal(id, val) { const el = document.getElementById(id); if (!el) return; if (el.type === 'checkbox') el.checked = !!val; else el.value = (val == null) ? '' : val; }
+    function showProviderFields() {
+      document.querySelectorAll('.ai-provider-section').forEach(s => s.style.display = 'none');
+      const p = document.getElementById('cfg_ai_provider').value;
+      const sec = document.getElementById('ai_sec_' + p);
+      if (sec) sec.style.display = 'block';
+    }
+    function populateConfigForm(cfg) {
+      _loadedConfig = cfg;
+      // Connection
+      setCfgVal('cfg_use_mesh_interface', cfg.use_mesh_interface);
+      setCfgVal('cfg_use_wifi', cfg.use_wifi);
+      setCfgVal('cfg_wifi_host', cfg.wifi_host);
+      setCfgVal('cfg_wifi_port', cfg.wifi_port);
+      setCfgVal('cfg_use_bluetooth', cfg.use_bluetooth);
+      setCfgVal('cfg_ble_address', cfg.ble_address);
+      setCfgVal('cfg_serial_port', cfg.serial_port);
+      setCfgVal('cfg_serial_baud', cfg.serial_baud);
+      setCfgVal('cfg_debug', cfg.debug);
+      // AI Provider
+      const provVal = (cfg.ai_provider || '').split(',')[0].trim();
+      const provSelect = document.getElementById('cfg_ai_provider');
+      if (provSelect) { for (let o of provSelect.options) { if (o.value === provVal) { provSelect.value = provVal; break; } } }
+      showProviderFields();
+      // Per-provider fields
+      const providers = ['lmstudio','openai','ollama','claude','gemini','grok','openrouter','groq','deepseek','mistral','openai_compatible'];
+      providers.forEach(p => {
+        if (p === 'lmstudio') { setCfgVal('cfg_lmstudio_url', cfg.lmstudio_url); setCfgVal('cfg_lmstudio_chat_model', cfg.lmstudio_chat_model); setCfgVal('cfg_lmstudio_embedding_model', cfg.lmstudio_embedding_model); setCfgVal('cfg_lmstudio_timeout', cfg.lmstudio_timeout); }
+        else if (p === 'ollama') { setCfgVal('cfg_ollama_url', cfg.ollama_url); setCfgVal('cfg_ollama_model', cfg.ollama_model); setCfgVal('cfg_ollama_timeout', cfg.ollama_timeout); setCfgVal('cfg_ollama_keep_alive', cfg.ollama_keep_alive); setCfgVal('cfg_ollama_max_parallel', cfg.ollama_max_parallel); }
+        else if (p === 'openai_compatible') { setCfgVal('cfg_openai_compatible_url', cfg.openai_compatible_url); setCfgVal('cfg_openai_compatible_api_key', cfg.openai_compatible_api_key); setCfgVal('cfg_openai_compatible_model', cfg.openai_compatible_model); setCfgVal('cfg_openai_compatible_timeout', cfg.openai_compatible_timeout); }
+        else { setCfgVal('cfg_'+p+'_api_key', cfg[p+'_api_key']); setCfgVal('cfg_'+p+'_model', cfg[p+'_model']); setCfgVal('cfg_'+p+'_timeout', cfg[p+'_timeout']); }
+      });
+      // Behavior
+      setCfgVal('cfg_system_prompt', cfg.system_prompt);
+      setCfgVal('cfg_ai_command', cfg.ai_command);
+      setCfgVal('cfg_reply_in_channels', cfg.reply_in_channels);
+      setCfgVal('cfg_reply_in_directs', cfg.reply_in_directs);
+      setCfgVal('cfg_ai_respond_on_longfast', cfg.ai_respond_on_longfast);
+      setCfgVal('cfg_respond_to_mqtt_messages', cfg.respond_to_mqtt_messages);
+      // Chunking
+      setCfgVal('cfg_chunk_size', cfg.chunk_size);
+      setCfgVal('cfg_max_ai_chunks', cfg.max_ai_chunks);
+      setCfgVal('cfg_chunk_delay', cfg.chunk_delay);
+      // Node Identity
+      setCfgVal('cfg_ai_node_name', cfg.ai_node_name);
+      setCfgVal('cfg_local_location_string', cfg.local_location_string);
+      setCfgVal('cfg_force_node_num', cfg.force_node_num);
+      setCfgVal('cfg_nodes_online_window_sec', cfg.nodes_online_window_sec);
+      setCfgVal('cfg_max_message_log', cfg.max_message_log);
+      // Channels
+      const chNames = cfg.channel_names || {};
+      for (let i = 0; i <= 9; i++) setCfgVal('cfg_ch_' + i, chNames[String(i)] || '');
+      // Alerts
+      setCfgVal('cfg_enable_twilio', cfg.enable_twilio);
+      setCfgVal('cfg_twilio_sid', cfg.twilio_sid);
+      setCfgVal('cfg_twilio_auth_token', cfg.twilio_auth_token);
+      setCfgVal('cfg_twilio_from_number', cfg.twilio_from_number);
+      setCfgVal('cfg_alert_phone_number', cfg.alert_phone_number);
+      setCfgVal('cfg_twilio_inbound_target', cfg.twilio_inbound_target);
+      setCfgVal('cfg_twilio_inbound_channel_index', cfg.twilio_inbound_channel_index);
+      setCfgVal('cfg_twilio_inbound_node', cfg.twilio_inbound_node);
+      setCfgVal('cfg_enable_smtp', cfg.enable_smtp);
+      setCfgVal('cfg_smtp_host', cfg.smtp_host);
+      setCfgVal('cfg_smtp_port', cfg.smtp_port);
+      setCfgVal('cfg_smtp_user', cfg.smtp_user);
+      setCfgVal('cfg_smtp_pass', cfg.smtp_pass);
+      setCfgVal('cfg_alert_email_to', cfg.alert_email_to);
+    }
+    function collectConfigForm() {
+      const cfg = Object.assign({}, _loadedConfig);
+      cfg.debug = cfgVal('cfg_debug');
+      cfg.use_mesh_interface = cfgVal('cfg_use_mesh_interface');
+      cfg.use_wifi = cfgVal('cfg_use_wifi');
+      cfg.wifi_host = cfgVal('cfg_wifi_host');
+      cfg.wifi_port = cfgVal('cfg_wifi_port');
+      cfg.use_bluetooth = cfgVal('cfg_use_bluetooth');
+      cfg.ble_address = cfgVal('cfg_ble_address');
+      cfg.serial_port = cfgVal('cfg_serial_port');
+      cfg.serial_baud = cfgVal('cfg_serial_baud');
+      cfg.ai_provider = cfgVal('cfg_ai_provider');
+      // Per-provider
+      const providers = ['lmstudio','openai','ollama','claude','gemini','grok','openrouter','groq','deepseek','mistral','openai_compatible'];
+      providers.forEach(p => {
+        if (p === 'lmstudio') { cfg.lmstudio_url = cfgVal('cfg_lmstudio_url'); cfg.lmstudio_chat_model = cfgVal('cfg_lmstudio_chat_model'); cfg.lmstudio_embedding_model = cfgVal('cfg_lmstudio_embedding_model'); cfg.lmstudio_timeout = cfgVal('cfg_lmstudio_timeout'); }
+        else if (p === 'ollama') { cfg.ollama_url = cfgVal('cfg_ollama_url'); cfg.ollama_model = cfgVal('cfg_ollama_model'); cfg.ollama_timeout = cfgVal('cfg_ollama_timeout'); cfg.ollama_keep_alive = cfgVal('cfg_ollama_keep_alive'); cfg.ollama_max_parallel = cfgVal('cfg_ollama_max_parallel'); }
+        else if (p === 'openai_compatible') { cfg.openai_compatible_url = cfgVal('cfg_openai_compatible_url'); cfg.openai_compatible_api_key = cfgVal('cfg_openai_compatible_api_key'); cfg.openai_compatible_model = cfgVal('cfg_openai_compatible_model'); cfg.openai_compatible_timeout = cfgVal('cfg_openai_compatible_timeout'); }
+        else { cfg[p+'_api_key'] = cfgVal('cfg_'+p+'_api_key'); cfg[p+'_model'] = cfgVal('cfg_'+p+'_model'); cfg[p+'_timeout'] = cfgVal('cfg_'+p+'_timeout'); }
+      });
+      cfg.system_prompt = cfgVal('cfg_system_prompt');
+      cfg.ai_command = cfgVal('cfg_ai_command');
+      cfg.reply_in_channels = cfgVal('cfg_reply_in_channels');
+      cfg.reply_in_directs = cfgVal('cfg_reply_in_directs');
+      cfg.ai_respond_on_longfast = cfgVal('cfg_ai_respond_on_longfast');
+      cfg.respond_to_mqtt_messages = cfgVal('cfg_respond_to_mqtt_messages');
+      cfg.chunk_size = cfgVal('cfg_chunk_size');
+      cfg.max_ai_chunks = cfgVal('cfg_max_ai_chunks');
+      cfg.chunk_delay = cfgVal('cfg_chunk_delay');
+      cfg.ai_node_name = cfgVal('cfg_ai_node_name');
+      cfg.local_location_string = cfgVal('cfg_local_location_string');
+      cfg.force_node_num = cfgVal('cfg_force_node_num');
+      cfg.nodes_online_window_sec = cfgVal('cfg_nodes_online_window_sec');
+      cfg.max_message_log = cfgVal('cfg_max_message_log');
+      const chNames = {};
+      for (let i = 0; i <= 9; i++) chNames[String(i)] = cfgVal('cfg_ch_' + i) || ('Channel ' + i);
+      cfg.channel_names = chNames;
+      cfg.enable_twilio = cfgVal('cfg_enable_twilio');
+      cfg.twilio_sid = cfgVal('cfg_twilio_sid');
+      cfg.twilio_auth_token = cfgVal('cfg_twilio_auth_token');
+      cfg.twilio_from_number = cfgVal('cfg_twilio_from_number');
+      cfg.alert_phone_number = cfgVal('cfg_alert_phone_number');
+      cfg.twilio_inbound_target = cfgVal('cfg_twilio_inbound_target');
+      cfg.twilio_inbound_channel_index = cfgVal('cfg_twilio_inbound_channel_index');
+      cfg.twilio_inbound_node = cfgVal('cfg_twilio_inbound_node');
+      cfg.enable_smtp = cfgVal('cfg_enable_smtp');
+      cfg.smtp_host = cfgVal('cfg_smtp_host');
+      cfg.smtp_port = cfgVal('cfg_smtp_port');
+      cfg.smtp_user = cfgVal('cfg_smtp_user');
+      cfg.smtp_pass = cfgVal('cfg_smtp_pass');
+      cfg.alert_email_to = cfgVal('cfg_alert_email_to');
+      return cfg;
     }
     async function loadConfigFiles(){
       try{
         const r = await fetch('/config_editor/load');
         if(!r.ok){ throw new Error('Load failed'); }
         const data = await r.json();
-        document.getElementById('cfgEditor').value = JSON.stringify(data.config || {}, null, 2);
-        document.getElementById('cmdEditor').value = JSON.stringify(data.commands_config || {}, null, 2);
-        document.getElementById('motdEditor').value = data.motd || '';
+        populateConfigForm(data.config || {});
+        document.getElementById('cfgRawEditor').value = JSON.stringify(data.config || {}, null, 2);
+        // Populate commands form + hidden textarea fallback
+        const cmdData = data.commands_config || {};
+        populateCommandForm(cmdData.commands || []);
+        document.getElementById('cmdEditor').value = JSON.stringify(cmdData, null, 2);
+        // MOTD: strip surrounding quotes if server sends JSON-encoded string
+        let motdVal = data.motd || '';
+        if (typeof motdVal === 'string' && motdVal.startsWith('"') && motdVal.endsWith('"')) {
+          try { motdVal = JSON.parse(motdVal); } catch(e) {}
+        }
+        document.getElementById('motdEditor').value = motdVal;
       }catch(e){ alert('Error loading config files: '+e.message); }
     }
     async function saveConfigFiles(){
       try{
-        let cfgText = document.getElementById('cfgEditor').value;
-        let cmdText = document.getElementById('cmdEditor').value;
+        let activeTab = document.getElementById('cfgTab').style.display !== 'none' ? 'form' : (document.getElementById('cfgRawTab').style.display !== 'none' ? 'raw' : 'form');
+        let cfgJson;
+        if (activeTab === 'raw') {
+          let cfgText = document.getElementById('cfgRawEditor').value;
+          try{ cfgJson = JSON.parse(cfgText); } catch(e){ return alert('config.json is not valid JSON: '+e.message); }
+        } else {
+          cfgJson = collectConfigForm();
+        }
+        // Collect commands from form
+        let cmdJson = collectCommandForm();
         let motdText = document.getElementById('motdEditor').value;
-        let cfgJson = {};
-        let cmdJson = {};
-        try{ cfgJson = JSON.parse(cfgText); cfgText = JSON.stringify(cfgJson, null, 2); document.getElementById('cfgEditor').value = cfgText; } catch(e){ return alert('config.json is not valid JSON: '+e.message); }
-        try{ cmdJson = JSON.parse(cmdText); cmdText = JSON.stringify(cmdJson, null, 2); document.getElementById('cmdEditor').value = cmdText; } catch(e){ return alert('commands_config.json is not valid JSON: '+e.message); }
         const r = await fetch('/config_editor/save', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ config: cfgJson, commands_config: cmdJson, motd: motdText }) });
         const res = await r.json();
         if(!r.ok){ throw new Error(res.message||'Save failed'); }
         alert('Saved. Some changes require restarting the service to take effect.');
+        loadConfigFiles();
       }catch(e){ alert('Error saving: '+e.message); }
     }
 
@@ -2788,38 +3853,71 @@ def dashboard():
 
       const channelDiv = document.getElementById("channelDiv");
       channelDiv.innerHTML = "";
+      // Track collapsed state per channel
+      if (!window._channelCollapsed) window._channelCollapsed = {};
       Object.keys(groups).sort().forEach(ch => {
-        const name = CHANNEL_NAMES[ch] || `Channel ${ch}`;
-        // Channel header with reply and mark all as read button
+        const name = getChannelName(ch);
+        const unreadCount = groups[ch].filter(m => !isChannelMsgRead(m.timestamp, ch)).length;
+
+        // Collapsible channel group container
+        const groupDiv = document.createElement("div");
+        groupDiv.className = "channel-group";
+
+        // Channel group header (clickable to collapse)
         const headerWrap = document.createElement("div");
-        headerWrap.className = "channel-header";
+        headerWrap.className = "channel-group-header";
+        const toggleIcon = document.createElement("span");
+        toggleIcon.className = "ch-toggle" + (window._channelCollapsed[ch] ? " collapsed" : "");
+        toggleIcon.textContent = "▼";
+        headerWrap.appendChild(toggleIcon);
         const header = document.createElement("h3");
-        header.textContent = `${ch} – ${name}`;
-        header.style.margin = 0;
+        header.innerHTML = `📻 ${ch} – ${name}` + (unreadCount > 0 ? ` <span style="background:var(--theme-color);color:#000;border-radius:10px;padding:1px 7px;font-size:0.8em;margin-left:6px;">${unreadCount}</span>` : '');
         headerWrap.appendChild(header);
 
         // Add reply button for channel
         const replyBtn = document.createElement("button");
-        replyBtn.textContent = "Send to Channel";
+        replyBtn.textContent = "Send";
         replyBtn.className = "reply-btn";
-        replyBtn.onclick = function() {
-          replyToMessage('broadcast', ch);
-        };
+        replyBtn.onclick = function(e) { e.stopPropagation(); replyToMessage('broadcast', ch); };
         headerWrap.appendChild(replyBtn);
+
+        // PING button for channel
+        const chPingBtn = document.createElement("button");
+        chPingBtn.textContent = "📡 PING";
+        chPingBtn.className = "reply-btn";
+        chPingBtn.title = "Send /PING to this channel";
+        chPingBtn.onclick = function(e) { e.stopPropagation(); sendPingToChannel(ch); };
+        headerWrap.appendChild(chPingBtn);
+
+        // PONG button for channel
+        const chPongBtn = document.createElement("button");
+        chPongBtn.textContent = "🏓 PONG";
+        chPongBtn.className = "reply-btn";
+        chPongBtn.title = "Send /PONG to this channel";
+        chPongBtn.onclick = function(e) { e.stopPropagation(); sendPongToChannel(ch); };
+        headerWrap.appendChild(chPongBtn);
 
         // Mark all as read for this channel
         const markAllBtn = document.createElement("button");
-        markAllBtn.textContent = "Mark all as read";
+        markAllBtn.textContent = "Mark all read";
         markAllBtn.className = "mark-all-read-btn";
-        markAllBtn.onclick = function() {
-          markChannelAsRead(ch);
-        };
+        markAllBtn.onclick = function(e) { e.stopPropagation(); markChannelAsRead(ch); };
         headerWrap.appendChild(markAllBtn);
 
-        channelDiv.appendChild(headerWrap);
+        // Toggle collapse on header click
+        headerWrap.onclick = function() {
+          window._channelCollapsed[ch] = !window._channelCollapsed[ch];
+          bodyDiv.classList.toggle('collapsed');
+          toggleIcon.classList.toggle('collapsed');
+        };
+        groupDiv.appendChild(headerWrap);
+
+        // Channel body (messages)
+        const bodyDiv = document.createElement("div");
+        bodyDiv.className = "channel-group-body" + (window._channelCollapsed[ch] ? " collapsed" : "");
 
         groups[ch].forEach(m => {
-          if (isChannelMsgRead(m.timestamp, ch)) return; // Hide read messages
+          if (isChannelMsgRead(m.timestamp, ch)) return;
           const wrap = document.createElement("div");
           wrap.className = "message";
           if (isRecent(m.timestamp, 60)) wrap.classList.add("newMessage");
@@ -2830,7 +3928,6 @@ def dashboard():
           body.textContent = m.message;
           wrap.append(ts, body);
 
-          // Mark as read button
           const markBtn = document.createElement("button");
           markBtn.textContent = "Mark as read";
           markBtn.className = "mark-read-btn";
@@ -2844,7 +3941,6 @@ def dashboard():
           };
           wrap.appendChild(markBtn);
 
-          // React button and emoji picker
           const reactBtn = document.createElement('button');
           reactBtn.type = 'button';
           reactBtn.textContent = 'React';
@@ -2859,9 +3955,10 @@ def dashboard():
           wrap.appendChild(reactBtn);
           wrap.appendChild(picker);
 
-          channelDiv.appendChild(wrap);
+          bodyDiv.appendChild(wrap);
         });
-        channelDiv.appendChild(document.createElement("hr"));
+        groupDiv.appendChild(bodyDiv);
+        channelDiv.appendChild(groupDiv);
       });
 
       // Update global reply targets
@@ -2907,7 +4004,7 @@ def dashboard():
 
       Object.keys(threads).forEach(nodeId => {
         const node = allNodes.find(n => n.id == nodeId);
-        const shortName = node ? node.shortName : nodeId;
+        const shortName = node ? (node.shortName || node.longName || nodeId) : nodeId;
         const threadDiv = document.createElement("div");
         threadDiv.className = "dm-thread";
 
@@ -3038,10 +4135,42 @@ def dashboard():
           d.className = "nodeItem";
           if (isRecentNode(n.id)) d.classList.add("recentNode");
 
-          // Main line: Short name and ID
+          // Main line: Star (favorite) + custom name or short name + ID
           const mainLine = document.createElement("div");
           mainLine.className = "nodeMainLine";
-          mainLine.innerHTML = `<span>${n.shortName || ""}</span> <span style="color:#ffa500;">(${n.id})</span>`;
+          const isFav = isFavoriteNode(n.id);
+          const customName = getCustomNodeName(n.id);
+
+          const starBtn = document.createElement("span");
+          starBtn.textContent = isFav ? '⭐' : '☆';
+          starBtn.title = isFav ? 'Remove from favorites' : 'Add to favorites';
+          starBtn.style.cssText = 'cursor:pointer;margin-right:4px;font-size:1.1em;';
+          starBtn.onclick = (e) => { e.stopPropagation(); toggleFavoriteNode(n.id); };
+          mainLine.appendChild(starBtn);
+
+          if (customName) {
+            const cName = document.createElement('span');
+            cName.textContent = customName;
+            cName.style.cssText = 'color:#0ff;font-weight:bold;';
+            mainLine.appendChild(cName);
+            const origName = document.createElement('span');
+            origName.innerHTML = ` <span style="color:#888;font-size:0.85em;">(${n.shortName || ''})</span> <span style="color:#ffa500;">(${n.id})</span>`;
+            mainLine.appendChild(origName);
+          } else {
+            const nameSpan = document.createElement('span');
+            nameSpan.innerHTML = `${n.shortName || ''} <span style="color:#ffa500;">(${n.id})</span>`;
+            mainLine.appendChild(nameSpan);
+          }
+
+          const editNameBtn = document.createElement('span');
+          editNameBtn.textContent = '✏️';
+          editNameBtn.title = 'Set custom name';
+          editNameBtn.style.cssText = 'cursor:pointer;margin-left:6px;font-size:0.85em;opacity:0.6;';
+          editNameBtn.onmouseenter = () => editNameBtn.style.opacity = '1';
+          editNameBtn.onmouseleave = () => editNameBtn.style.opacity = '0.6';
+          editNameBtn.onclick = (e) => { e.stopPropagation(); promptCustomNodeName(n.id, customName); };
+          mainLine.appendChild(editNameBtn);
+
           d.appendChild(mainLine);
 
           // Long name (if present)
@@ -3052,35 +4181,66 @@ def dashboard():
             d.appendChild(longName);
           }
 
-          // Info line 1: GPS/map, DM button, distance
+          // Info line 1: DM button (always), GPS/map, distance
           const infoLine1 = document.createElement("div");
           infoLine1.className = "nodeInfoLine";
           let gps = nodeGPSInfo[String(n.id)];
+
+          // DM button - always available for all nodes
+          const dmBtn = document.createElement("button");
+          dmBtn.textContent = "💬 DM";
+          dmBtn.className = "reply-btn";
+          dmBtn.onclick = () => dmToNode(n.id, n.shortName || n.longName || n.id);
+          infoLine1.appendChild(dmBtn);
+
+          // PING button
+          const pingBtn = document.createElement("button");
+          pingBtn.textContent = "📡 PING";
+          pingBtn.className = "reply-btn";
+          pingBtn.title = "Send /PING to this node";
+          pingBtn.onclick = () => sendPingToNode(n.id, n.shortName || n.longName || n.id);
+          infoLine1.appendChild(pingBtn);
+
+          // PONG button
+          const pongBtn = document.createElement("button");
+          pongBtn.textContent = "🏓 PONG";
+          pongBtn.className = "reply-btn";
+          pongBtn.title = "Send /PONG to this node";
+          pongBtn.onclick = () => sendPongToNode(n.id, n.shortName || n.longName || n.id);
+          infoLine1.appendChild(pongBtn);
+
           if (gps && gps.lat != null && gps.lon != null) {
-            // Map button (emoji)
+            // Map buttons container - keep Show on Map and Google Maps on same line
+            const mapBtns = document.createElement("span");
+            mapBtns.style.cssText = "display:inline-flex;gap:6px;align-items:center;";
+
+            // Show on Map button - fly to node on the Leaflet map
+            const showMapBtn = document.createElement("button");
+            showMapBtn.textContent = "📍 Show on Map";
+            showMapBtn.className = "reply-btn";
+            showMapBtn.title = "Highlight this node on the map";
+            showMapBtn.onclick = () => flyToNode(n.id);
+            mapBtns.appendChild(showMapBtn);
+
+            // Google Maps link
             const mapA = document.createElement("a");
             mapA.href = `https://www.google.com/maps/search/?api=1&query=${gps.lat},${gps.lon}`;
             mapA.target = "_blank";
             mapA.className = "nodeMapBtn";
-            mapA.title = "Show on Google Maps";
-            mapA.innerHTML = "🗺️";
-            infoLine1.appendChild(mapA);
+            mapA.title = "Open in Google Maps";
+            mapA.innerHTML = "🗺️ Google Maps";
+            mapBtns.appendChild(mapA);
 
-            // DM button next to Map
-            const dmBtn = document.createElement("button");
-            dmBtn.textContent = "DM";
-            dmBtn.className = "reply-btn";
-            dmBtn.style.marginLeft = "6px";
-            dmBtn.onclick = () => dmToNode(n.id, n.shortName);
-            infoLine1.appendChild(dmBtn);
+            infoLine1.appendChild(mapBtns);
 
             // Distance
-            if (myGPS && myGPS.lat != null && myGPS.lon != null) {
-              let dist = calcDistance(myGPS.lat, myGPS.lon, gps.lat, gps.lon);
+            let effectiveGPS = getEffectiveMyGPS();
+            if (effectiveGPS && effectiveGPS.lat != null && effectiveGPS.lon != null) {
+              let dist = calcDistance(effectiveGPS.lat, effectiveGPS.lon, gps.lat, gps.lon);
               if (dist < 99999) {
                 const distSpan = document.createElement("span");
                 distSpan.className = "nodeGPS";
-                distSpan.title = "Approximate distance from connected node";
+                distSpan.title = "Approximate distance";
                 distSpan.innerHTML = `📏 ${dist.toFixed(2)} km`;
                 infoLine1.appendChild(distSpan);
               }
@@ -3102,14 +4262,21 @@ def dashboard():
           }
           // If hops is not available, do not show this section at all
 
-          // Info line 3 (last): Beacon/reporting time
+          // Info line 3 (last): Beacon/reporting time and last heard
           const infoLine2 = document.createElement("div");
           infoLine2.className = "nodeInfoLine";
+          if (gps && gps.lastHeard) {
+            const lastHeard = document.createElement("span");
+            lastHeard.className = "nodeBeacon";
+            lastHeard.title = "Last heard from this node";
+            lastHeard.innerHTML = `📡 Last heard: ${getTZAdjusted(gps.lastHeard)}`;
+            infoLine2.appendChild(lastHeard);
+          }
           if (gps && gps.beacon_time) {
             const beacon = document.createElement("span");
             beacon.className = "nodeBeacon";
             beacon.title = "Last beacon/reporting time";
-            beacon.innerHTML = `🕒 ${getTZAdjusted(gps.beacon_time)}`;
+            beacon.innerHTML = `🕒 Beacon: ${getTZAdjusted(gps.beacon_time)}`;
             infoLine2.appendChild(beacon);
           }
           d.appendChild(infoLine2);
@@ -3138,6 +4305,182 @@ def dashboard():
 
     function filterNodes(val, isDest) {
       updateNodesUI(allNodes, isDest);
+    }
+
+    // --- Node Map (Leaflet) ---
+    let nodeMapInstance = null;
+    let nodeMapMarkers = [];
+    let mapUserInteracted = false;
+    let mapLastNodeCount = 0;
+    function toggleNodeMap(btn) {
+      const panel = document.getElementById('nodeMapPanel');
+      const isCollapsed = panel.classList.toggle('collapsed');
+      btn.textContent = isCollapsed ? 'Show Map' : 'Hide Map';
+      if (!isCollapsed) {
+        setTimeout(function() {
+          if (!nodeMapInstance) {
+            nodeMapInstance = L.map('nodeMap').setView([0, 0], 2);
+            nodeMapInstance.on('zoomstart dragstart', function() { mapUserInteracted = true; });
+            applyMapTileLayer();
+          }
+          nodeMapInstance.invalidateSize();
+          updateNodeMap();
+        }, 100);
+      }
+    }
+    // Map DM mini-box state
+    let mapDmTargetId = null;
+    let mapDmTargetName = '';
+    function openMapDm(nodeId, shortName) {
+      mapDmTargetId = nodeId;
+      mapDmTargetName = shortName;
+      document.getElementById('mapDmTo').textContent = '💬 DM to ' + shortName;
+      document.getElementById('mapDmMsg').value = '@' + shortName + ': ';
+      document.getElementById('mapDmBox').style.display = 'block';
+      document.getElementById('mapDmMsg').focus();
+    }
+    function closeMapDm() {
+      document.getElementById('mapDmBox').style.display = 'none';
+      mapDmTargetId = null;
+    }
+    function sendMapDm() {
+      let msg = document.getElementById('mapDmMsg').value.trim();
+      if (!msg || !mapDmTargetId) return;
+      fetch('/ui_send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'message=' + encodeURIComponent(msg) + '&destination_node=' + encodeURIComponent(mapDmTargetId)
+      }).then(r => { if (r.ok) { closeMapDm(); } else { alert('Send failed'); } }).catch(e => alert('Error: ' + e));
+    }
+
+    function sendPingToNode(nodeId, shortName) {
+      if (!nodeId) return;
+      fetch('/ui_send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'message=' + encodeURIComponent('/PING') + '&destination_node=' + encodeURIComponent(nodeId)
+      }).then(r => {
+        if (r.ok) { alert('PING sent to ' + (shortName || nodeId)); }
+        else { alert('PING failed'); }
+      }).catch(e => alert('Error: ' + e));
+    }
+
+    function sendPongToNode(nodeId, shortName) {
+      if (!nodeId) return;
+      fetch('/ui_send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'message=' + encodeURIComponent('/PONG') + '&destination_node=' + encodeURIComponent(nodeId)
+      }).then(r => {
+        if (r.ok) { alert('PONG sent to ' + (shortName || nodeId)); }
+        else { alert('PONG failed'); }
+      }).catch(e => alert('Error: ' + e));
+    }
+
+    // Wrapper functions for mapDmBox inline handlers
+    function sendMapPing() { sendPingToNode(mapDmTargetId, mapDmTargetName); }
+    function sendMapPong() { sendPongToNode(mapDmTargetId, mapDmTargetName); }
+
+    function sendPingToChannel(channelIdx) {
+      fetch('/ui_send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'message=' + encodeURIComponent('/PING') + '&channel_index=' + encodeURIComponent(channelIdx)
+      }).then(r => {
+        if (r.ok) { alert('PING sent to channel ' + channelIdx); }
+        else { alert('PING failed'); }
+      }).catch(e => alert('Error: ' + e));
+    }
+
+    function sendPongToChannel(channelIdx) {
+      fetch('/ui_send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'message=' + encodeURIComponent('/PONG') + '&channel_index=' + encodeURIComponent(channelIdx)
+      }).then(r => {
+        if (r.ok) { alert('PONG sent to channel ' + channelIdx); }
+        else { alert('PONG failed'); }
+      }).catch(e => alert('Error: ' + e));
+    }
+
+    // Node-to-marker lookup for fly-to from Available Nodes list
+    let nodeMarkerLookup = {};
+
+    function flyToNode(nodeId) {
+      let marker = nodeMarkerLookup[String(nodeId)];
+      if (!marker || !nodeMapInstance) return;
+      // Ensure map panel is visible (uncollapse if needed)
+      let panel = document.getElementById('nodeMapPanel');
+      if (panel && panel.classList.contains('collapsed')) {
+        panel.classList.remove('collapsed');
+        setTimeout(function() {
+          if (nodeMapInstance) nodeMapInstance.invalidateSize();
+          updateNodeMap();
+        }, 100);
+      }
+      // Scroll map into view
+      panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(function() {
+        nodeMapInstance.invalidateSize();
+        nodeMapInstance.flyTo(marker.getLatLng(), 15, { duration: 1 });
+        setTimeout(function() { marker.openPopup(); }, 600);
+      }, 300);
+    }
+
+    function updateNodeMap() {
+      if (!nodeMapInstance) return;
+      // Clear existing markers
+      nodeMapMarkers.forEach(m => nodeMapInstance.removeLayer(m));
+      nodeMapMarkers = [];
+      nodeMarkerLookup = {};
+      let bounds = [];
+      // Add markers for all nodes with GPS
+      for (let nid in nodeGPSInfo) {
+        let gps = nodeGPSInfo[nid];
+        if (gps && gps.lat != null && gps.lon != null) {
+          let node = allNodes.find(n => String(n.id) === nid);
+          let name = node ? (node.shortName || nid) : nid;
+          let longName = node && node.longName ? node.longName : '';
+          let cName = getCustomNodeName(nid);
+          let favStar = isFavoriteNode(nid) ? '⭐ ' : '';
+          // Build popup with DM + Google Maps buttons
+          let displayName = cName ? `${cName} <span style="color:#888;font-size:0.85em;">(${name})</span>` : name;
+          let popup = `<b>${favStar}${displayName}</b>`;
+          if (longName) popup += `<br>${longName}`;
+          popup += `<br>ID: ${nid}`;
+          popup += `<br>📍 ${gps.lat.toFixed(5)}, ${gps.lon.toFixed(5)}`;
+          if (gps.lastHeard) popup += `<br>Last heard: ${gps.lastHeard}`;
+          if (gps.hops != null) popup += `<br>Hops: ${gps.hops}`;
+          popup += `<br><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;align-items:center;">`;
+          popup += `<button onclick="openMapDm('${nid}','${name.replace(/'/g,"\\\'")}')" style="background:var(--theme-color);color:#000;border:none;padding:4px 8px;border-radius:5px;cursor:pointer;font-weight:bold;font-size:0.85em;">💬 DM</button>`;
+          popup += `<button onclick="sendPingToNode('${nid}','${name.replace(/'/g,"\\\'")}')" style="background:#2196f3;color:#fff;border:none;padding:4px 8px;border-radius:5px;cursor:pointer;font-weight:bold;font-size:0.85em;">📡 PING</button>`;
+          popup += `<button onclick="sendPongToNode('${nid}','${name.replace(/'/g,"\\\'")}')" style="background:#9c27b0;color:#fff;border:none;padding:4px 8px;border-radius:5px;cursor:pointer;font-weight:bold;font-size:0.85em;">🏓 PONG</button>`;
+          popup += `<a href='https://www.google.com/maps/search/?api=1&query=${gps.lat},${gps.lon}' target='_blank' style='background:#34a853;color:#fff;border:none;padding:4px 8px;border-radius:5px;text-decoration:none;font-weight:bold;font-size:0.85em;'>🗺️ Maps</a>`;
+          popup += `</div>`;
+          // Create marker with permanent shortname tooltip
+          let marker = L.marker([gps.lat, gps.lon]).bindPopup(popup, {maxWidth: 400});
+          marker.bindTooltip(cName || name, { permanent: true, direction: 'right', offset: [12, 0], className: 'leaflet-marker-label' });
+          marker.addTo(nodeMapInstance);
+          nodeMapMarkers.push(marker);
+          nodeMarkerLookup[nid] = marker;
+          bounds.push([gps.lat, gps.lon]);
+        }
+      }
+      // Add connected node marker
+      let effGPS = getEffectiveMyGPS();
+      if (effGPS && effGPS.lat != null && effGPS.lon != null) {
+        let myMarker = L.circleMarker([effGPS.lat, effGPS.lon], {
+          radius: 8, color: '#00ff00', fillColor: '#00ff00', fillOpacity: 0.8
+        }).bindPopup('<b>Connected Node (You)</b><br>📍 ' + effGPS.lat.toFixed(5) + ', ' + effGPS.lon.toFixed(5));
+        myMarker.bindTooltip('You', { permanent: true, direction: 'right', offset: [12, 0], className: 'leaflet-marker-label' });
+        myMarker.addTo(nodeMapInstance);
+        nodeMapMarkers.push(myMarker);
+        bounds.push([effGPS.lat, effGPS.lon]);
+      }
+      if (bounds.length > 0 && (!mapUserInteracted || bounds.length !== mapLastNodeCount)) {
+        nodeMapInstance.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 });
+        mapLastNodeCount = bounds.length;
+      }
     }
 
     // Track recently discovered nodes (seen in last hour)
@@ -3276,6 +4619,30 @@ def dashboard():
           bar.appendChild(b);
         });
       }
+      // Populate map DM emoji bar
+      const mapBar = document.getElementById('mapDmEmojiBar');
+      if (mapBar) {
+        mapBar.innerHTML = '';
+        COMMON_EMOJIS.forEach(e => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'emoji-btn';
+          b.textContent = e;
+          b.title = 'Insert emoji ' + e;
+          b.style.fontSize = '0.85em';
+          b.style.padding = '2px 4px';
+          b.onclick = () => {
+            const ta = document.getElementById('mapDmMsg');
+            if (!ta) return;
+            const start = ta.selectionStart ?? ta.value.length;
+            const end = ta.selectionEnd ?? ta.value.length;
+            ta.value = ta.value.slice(0, start) + e + ' ' + ta.value.slice(end);
+            ta.selectionStart = ta.selectionEnd = start + e.length + 1;
+            ta.focus();
+          };
+          mapBar.appendChild(b);
+        });
+      }
       initCharChunkCounter();
     }
   window.addEventListener("load", () => { onPageLoad(); pollStatus(); });
@@ -3354,6 +4721,229 @@ def dashboard():
   </script>
 </head>
 <body>
+
+<div id="disclaimerOverlay">
+  <div class="disclaimer-box" style="max-width:640px;">
+    <!-- Step 1: Welcome -->
+    <div id="wizStep1" class="wiz-step">
+      <h2>🚀 Welcome to MESH-API</h2>
+      <div class="disclaimer-text">
+        <p>Thank you for using <strong>MESH-API</strong> — a powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
+        <p style="color:#888;font-size:0.85em;">This is beta software under active development. It is <strong>NOT ASSOCIATED</strong> with the official Meshtastic or MeshCore projects. Use at your own risk.</p>
+        <p>Let's get your node configured in a few quick steps.</p>
+      </div>
+      <div class="disclaimer-btns">
+        <button class="btn-accept" onclick="wizNext(2)">Get Started →</button>
+        <button class="btn-accept" style="background:#555;" onclick="acceptDisclaimer()">Skip Setup</button>
+      </div>
+    </div>
+    <!-- Step 2: Connection -->
+    <div id="wizStep2" class="wiz-step" style="display:none;">
+      <h2>🔌 Step 1: Connection</h2>
+      <div class="disclaimer-text" style="text-align:left;">
+        <p>How is your Meshtastic device connected?</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0;">
+          <div><label style="color:#ccc;font-size:0.9em;">Serial Port</label><input type="text" id="wiz_serial_port" value="/dev/ttyUSB0" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+          <div><label style="color:#ccc;font-size:0.9em;">Serial Baud</label><input type="number" id="wiz_serial_baud" value="460800" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+        </div>
+        <div style="margin:8px 0;color:#aaa;font-size:0.85em;">— or use Wi-Fi / Bluetooth —</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="wiz_use_wifi" style="accent-color:var(--theme-color);width:18px;height:18px;"><label for="wiz_use_wifi" style="color:#ccc;font-size:0.9em;">Use Wi-Fi</label></div>
+          <div></div>
+          <div><label style="color:#ccc;font-size:0.9em;">Wi-Fi Host</label><input type="text" id="wiz_wifi_host" placeholder="192.168.x.x" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+          <div><label style="color:#ccc;font-size:0.9em;">Wi-Fi Port</label><input type="number" id="wiz_wifi_port" value="4403" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+          <div style="display:flex;align-items:center;gap:6px;grid-column:1/-1;"><input type="checkbox" id="wiz_use_bluetooth" style="accent-color:var(--theme-color);width:18px;height:18px;"><label for="wiz_use_bluetooth" style="color:#ccc;font-size:0.9em;">Use Bluetooth</label></div>
+          <div style="grid-column:1/-1;"><label style="color:#ccc;font-size:0.9em;">BLE Address</label><input type="text" id="wiz_ble_address" placeholder="" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+        </div>
+      </div>
+      <div class="disclaimer-btns"><button class="btn-accept" style="background:#555;" onclick="wizNext(1)">← Back</button><button class="btn-accept" onclick="wizNext(3)">Next →</button></div>
+    </div>
+    <!-- Step 3: AI Provider -->
+    <div id="wizStep3" class="wiz-step" style="display:none;">
+      <h2>🤖 Step 2: AI Provider</h2>
+      <div class="disclaimer-text" style="text-align:left;">
+        <p>Select your AI backend (you can change this later in Settings).</p>
+        <div style="margin:10px 0;"><label style="color:#ccc;font-size:0.9em;">Provider</label>
+          <select id="wiz_ai_provider" onchange="wizShowProvider()" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;">
+            <option value="">None / Skip</option>
+            <option value="lmstudio">LM Studio</option><option value="openai">OpenAI</option><option value="ollama">Ollama</option>
+            <option value="claude">Claude</option><option value="gemini">Gemini</option><option value="grok">Grok</option>
+            <option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="deepseek">DeepSeek</option>
+            <option value="mistral">Mistral</option><option value="openai_compatible">OpenAI Compatible</option>
+          </select>
+        </div>
+        <div id="wizProviderFields" style="display:grid;grid-template-columns:1fr;gap:8px;margin-top:10px;"></div>
+      </div>
+      <div class="disclaimer-btns"><button class="btn-accept" style="background:#555;" onclick="wizNext(2)">← Back</button><button class="btn-accept" onclick="wizNext(4)">Next →</button></div>
+    </div>
+    <!-- Step 4: Node Identity -->
+    <div id="wizStep4" class="wiz-step" style="display:none;">
+      <h2>📻 Step 3: Node Identity</h2>
+      <div class="disclaimer-text" style="text-align:left;">
+        <p>Give your node a name and location.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0;">
+          <div><label style="color:#ccc;font-size:0.9em;">Node Name</label><input type="text" id="wiz_node_name" placeholder="Mesh-API-Alpha" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+          <div><label style="color:#ccc;font-size:0.9em;">Location</label><input type="text" id="wiz_location" placeholder="@ My Location" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+        </div>
+        <div style="margin:10px 0;"><label style="color:#ccc;font-size:0.9em;">Channel 0 Name</label><input type="text" id="wiz_ch0" value="LongFast" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+      </div>
+      <div class="disclaimer-btns"><button class="btn-accept" style="background:#555;" onclick="wizNext(3)">← Back</button><button class="btn-accept" onclick="wizFinish()">Finish Setup ✓</button></div>
+    </div>
+  </div>
+</div>
+<div id="disclaimerDeclined" style="display:none;"></div>
+<script>
+  const wizProviderMeta = {
+    lmstudio: [{id:'wiz_lmstudio_url',label:'URL',ph:'http://localhost:1234/v1/chat/completions'},{id:'wiz_lmstudio_model',label:'Model',ph:'model-identifier'}],
+    openai: [{id:'wiz_openai_api_key',label:'API Key',ph:'sk-...',pw:true},{id:'wiz_openai_model',label:'Model',ph:'gpt-4.1-mini'}],
+    ollama: [{id:'wiz_ollama_url',label:'URL',ph:'http://localhost:11434/api/generate'},{id:'wiz_ollama_model',label:'Model',ph:'llama3'}],
+    claude: [{id:'wiz_claude_api_key',label:'API Key',ph:'sk-ant-...',pw:true},{id:'wiz_claude_model',label:'Model',ph:'claude-sonnet-4-20250514'}],
+    gemini: [{id:'wiz_gemini_api_key',label:'API Key',ph:'',pw:true},{id:'wiz_gemini_model',label:'Model',ph:'gemini-2.0-flash'}],
+    grok: [{id:'wiz_grok_api_key',label:'API Key',ph:'',pw:true},{id:'wiz_grok_model',label:'Model',ph:'grok-3'}],
+    openrouter: [{id:'wiz_openrouter_api_key',label:'API Key',ph:'',pw:true},{id:'wiz_openrouter_model',label:'Model',ph:'openai/gpt-4.1-mini'}],
+    groq: [{id:'wiz_groq_api_key',label:'API Key',ph:'',pw:true},{id:'wiz_groq_model',label:'Model',ph:'llama-3.3-70b-versatile'}],
+    deepseek: [{id:'wiz_deepseek_api_key',label:'API Key',ph:'',pw:true},{id:'wiz_deepseek_model',label:'Model',ph:'deepseek-chat'}],
+    mistral: [{id:'wiz_mistral_api_key',label:'API Key',ph:'',pw:true},{id:'wiz_mistral_model',label:'Model',ph:'mistral-small-latest'}],
+    openai_compatible: [{id:'wiz_oc_url',label:'URL',ph:''},{id:'wiz_oc_key',label:'API Key',ph:'',pw:true},{id:'wiz_oc_model',label:'Model',ph:''}],
+  };
+  function wizShowProvider() {
+    const p = document.getElementById('wiz_ai_provider').value;
+    const c = document.getElementById('wizProviderFields');
+    c.innerHTML = '';
+    if (!p || !wizProviderMeta[p]) return;
+    wizProviderMeta[p].forEach(f => {
+      const d = document.createElement('div');
+      d.innerHTML = `<label style="color:#ccc;font-size:0.9em;">${f.label}</label><input type="${f.pw?'password':'text'}" id="${f.id}" placeholder="${f.ph}" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;">`;
+      c.appendChild(d);
+    });
+  }
+  function wizNext(step) {
+    document.querySelectorAll('.wiz-step').forEach(s => s.style.display = 'none');
+    document.getElementById('wizStep' + step).style.display = '';
+  }
+  async function wizFinish() {
+    try {
+      const r = await fetch('/config_editor/load');
+      if (!r.ok) throw new Error('Load failed');
+      const data = await r.json();
+      const cfg = data.config || {};
+      // Connection
+      const gv = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+      const gb = (id) => { const el = document.getElementById(id); return el ? el.checked : false; };
+      cfg.serial_port = gv('wiz_serial_port') || cfg.serial_port;
+      cfg.serial_baud = parseInt(gv('wiz_serial_baud')) || cfg.serial_baud;
+      cfg.use_wifi = gb('wiz_use_wifi');
+      cfg.wifi_host = gv('wiz_wifi_host') || cfg.wifi_host;
+      cfg.wifi_port = parseInt(gv('wiz_wifi_port')) || cfg.wifi_port;
+      cfg.use_bluetooth = gb('wiz_use_bluetooth');
+      cfg.ble_address = gv('wiz_ble_address') || cfg.ble_address;
+      // AI Provider
+      const prov = gv('wiz_ai_provider');
+      if (prov) {
+        cfg.ai_provider = prov;
+        const meta = wizProviderMeta[prov] || [];
+        meta.forEach(f => {
+          const v = gv(f.id);
+          if (!v) return;
+          // Map wizard field ids to config keys
+          const keyMap = {
+            wiz_lmstudio_url:'lmstudio_url', wiz_lmstudio_model:'lmstudio_chat_model',
+            wiz_openai_api_key:'openai_api_key', wiz_openai_model:'openai_model',
+            wiz_ollama_url:'ollama_url', wiz_ollama_model:'ollama_model',
+            wiz_claude_api_key:'claude_api_key', wiz_claude_model:'claude_model',
+            wiz_gemini_api_key:'gemini_api_key', wiz_gemini_model:'gemini_model',
+            wiz_grok_api_key:'grok_api_key', wiz_grok_model:'grok_model',
+            wiz_openrouter_api_key:'openrouter_api_key', wiz_openrouter_model:'openrouter_model',
+            wiz_groq_api_key:'groq_api_key', wiz_groq_model:'groq_model',
+            wiz_deepseek_api_key:'deepseek_api_key', wiz_deepseek_model:'deepseek_model',
+            wiz_mistral_api_key:'mistral_api_key', wiz_mistral_model:'mistral_model',
+            wiz_oc_url:'openai_compatible_url', wiz_oc_key:'openai_compatible_api_key', wiz_oc_model:'openai_compatible_model',
+          };
+          if (keyMap[f.id]) cfg[keyMap[f.id]] = v;
+        });
+      }
+      // Node identity
+      cfg.ai_node_name = gv('wiz_node_name') || cfg.ai_node_name;
+      cfg.local_location_string = gv('wiz_location') || cfg.local_location_string;
+      if (gv('wiz_ch0')) { cfg.channel_names = cfg.channel_names || {}; cfg.channel_names['0'] = gv('wiz_ch0'); }
+      // Save
+      const sr = await fetch('/config_editor/save', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ config: cfg, commands_config: data.commands_config, motd: data.motd }) });
+      if (!sr.ok) { const j = await sr.json(); throw new Error(j.message || 'Save failed'); }
+      acceptDisclaimer();
+      alert('Setup complete! You may want to restart the service for connection changes to take effect.');
+    } catch(e) { alert('Error saving wizard config: ' + e.message); }
+  }
+  async function populateWizardFromConfig() {
+    try {
+      const r = await fetch('/config_editor/load');
+      if (!r.ok) return;
+      const data = await r.json();
+      const cfg = data.config || {};
+      const sv = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '') el.value = v; };
+      const sb = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+      // Connection
+      sv('wiz_serial_port', cfg.serial_port);
+      sv('wiz_serial_baud', cfg.serial_baud);
+      sb('wiz_use_wifi', cfg.use_wifi);
+      sv('wiz_wifi_host', cfg.wifi_host);
+      sv('wiz_wifi_port', cfg.wifi_port);
+      sb('wiz_use_bluetooth', cfg.use_bluetooth);
+      sv('wiz_ble_address', cfg.ble_address);
+      // AI Provider
+      if (cfg.ai_provider) {
+        sv('wiz_ai_provider', cfg.ai_provider);
+        wizShowProvider();
+        // Wait for fields to render, then populate
+        setTimeout(() => {
+          const keyMap = {
+            lmstudio_url:'wiz_lmstudio_url', lmstudio_chat_model:'wiz_lmstudio_model',
+            openai_api_key:'wiz_openai_api_key', openai_model:'wiz_openai_model',
+            ollama_url:'wiz_ollama_url', ollama_model:'wiz_ollama_model',
+            claude_api_key:'wiz_claude_api_key', claude_model:'wiz_claude_model',
+            gemini_api_key:'wiz_gemini_api_key', gemini_model:'wiz_gemini_model',
+            grok_api_key:'wiz_grok_api_key', grok_model:'wiz_grok_model',
+            openrouter_api_key:'wiz_openrouter_api_key', openrouter_model:'wiz_openrouter_model',
+            groq_api_key:'wiz_groq_api_key', groq_model:'wiz_groq_model',
+            deepseek_api_key:'wiz_deepseek_api_key', deepseek_model:'wiz_deepseek_model',
+            mistral_api_key:'wiz_mistral_api_key', mistral_model:'wiz_mistral_model',
+            openai_compatible_url:'wiz_oc_url', openai_compatible_api_key:'wiz_oc_key', openai_compatible_model:'wiz_oc_model',
+          };
+          Object.keys(keyMap).forEach(cfgKey => { if (cfg[cfgKey]) sv(keyMap[cfgKey], cfg[cfgKey]); });
+        }, 50);
+      }
+      // Node identity
+      sv('wiz_node_name', cfg.ai_node_name);
+      sv('wiz_location', cfg.local_location_string);
+      if (cfg.channel_names && cfg.channel_names['0']) sv('wiz_ch0', cfg.channel_names['0']);
+    } catch(e) { console.log('Could not pre-populate wizard:', e); }
+  }
+  function openWizard() {
+    // Reset to step 1
+    document.querySelectorAll('.wiz-step').forEach(s => s.style.display = 'none');
+    document.getElementById('wizStep1').style.display = '';
+    document.getElementById('disclaimerOverlay').style.display = '';
+    populateWizardFromConfig();
+  }
+  function acceptDisclaimer() {
+    localStorage.setItem('meshapi_disclaimer_accepted', 'true');
+    localStorage.setItem('meshapi_wizard_completed', 'true');
+    document.getElementById('disclaimerOverlay').style.display = 'none';
+  }
+  (function() {
+    // Allow clearing wizard state via URL param: ?resetWizard=1
+    if (new URLSearchParams(window.location.search).get('resetWizard') === '1') {
+      localStorage.removeItem('meshapi_disclaimer_accepted');
+      localStorage.removeItem('meshapi_wizard_completed');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    if (localStorage.getItem('meshapi_disclaimer_accepted') === 'true') {
+      document.getElementById('disclaimerOverlay').style.display = 'none';
+    } else {
+      populateWizardFromConfig();
+    }
+  })();
+</script>
+
   <div id="appRoot">
   <div id="connectionStatus"></div>
   """ + f"""
@@ -3366,21 +4956,49 @@ def dashboard():
 
   <div class="masthead">
     <span class="logo-wrap">
-      <img id="mastheadLogo" src="https://mr-tbot.com/wp-content/uploads/2026/02/MESH-API.png" alt="MESH-API Logo" loading="lazy">
+      <a href="https://mesh-api.dev" target="_blank" style="display:inline-block;"><img id="mastheadLogo" src="https://mr-tbot.com/wp-content/uploads/2026/02/MESH-API.png" alt="MESH-API Logo" loading="lazy"></a>
       <span class="logo-overlay"></span>
     </span>
     <div class="masthead-actions">
       <span class="suffix-chip" title="Current AI alias and suffix">""" + f"{AI_ALIAS_CANONICAL} (suffix: {AI_SUFFIX})" + """</span>
-      <button type="button" onclick="openCommandsModal()">Commands</button>
-      <button type="button" onclick="openExtensionsModal()">Extensions</button>
-      <button type="button" onclick="openConfigModal()">Config</button>
-      <a href="/logs" target="_blank">Logs</a>
+      <button type="button" onclick="openCommandsModal()">⌘ Commands</button>
+      <button type="button" onclick="openExtensionsModal()">🧩 Extensions</button>
+      <button type="button" onclick="openConfigModal()">⚙️ Config</button>
+      <a href="/logs" target="_blank">📜 Logs</a>
     </div>
   </div>
 
+  <div id="sortableContainer">
+  <div data-section="nodeMapPanel">
+  <div class="lcars-panel" id="nodeMapPanel">
+    <div class="panel-title-row">
+      <h2><span class="drag-handle" title="Drag to reorder">&#x2630;</span> 🗺️ Node Map</h2>
+      <div><button class="section-hide-btn" onclick="hideSection('nodeMapPanel')" title="Hide this section">✕</button></div>
+    </div>
+    <div class="panel-body" style="position:relative;">
+      <div id="nodeMap"></div>
+      <div id="mapDmBox">
+        <div class="mapDm-header">
+          <h4 id="mapDmTo">💬 DM to ...</h4>
+          <button onclick="closeMapDm()">&times;</button>
+        </div>
+        <textarea id="mapDmMsg" placeholder="Type a message..."></textarea>
+        <div id="mapDmEmojiBar" style="margin:4px 0; display:flex; flex-wrap:wrap; gap:4px;"></div>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:6px;">
+          <button class="mapDm-send" onclick="sendMapDm()" style="margin:0;">Send</button>
+          <button onclick="sendMapPing()" style="background:#2196f3;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-weight:bold;cursor:pointer;font-size:0.85em;">📡 PING</button>
+          <button onclick="sendMapPong()" style="background:#9c27b0;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-weight:bold;cursor:pointer;font-size:0.85em;">🏓 PONG</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <div data-section="sendForm">
   <div class="lcars-panel" id="sendForm">
     <div class="panel-header">
-      <h2>Send a Message</h2>
+      <h2><span class="drag-handle" title="Drag to reorder">&#x2630;</span> ✉️ Send a Message</h2>
+      <button class="section-hide-btn" onclick="hideSection('sendForm')" title="Hide this section">✕</button>
     </div>
     <form method="POST" action="/ui_send">
   <label>Message Mode:</label>
@@ -3410,17 +5028,20 @@ def dashboard():
       <textarea id="messageBox" name="message" rows="3" style="width:80%;"></textarea>
   <div id="quickEmojiBar" style="margin:6px 0; display:flex; flex-wrap:wrap; gap:6px;"></div>
   <div id="charCounter">Characters: 0/""" + str(MAX_RESPONSE_LENGTH) + """, Chunks: 0/""" + str(MAX_CHUNKS) + """</div><br>
-  <button type="submit" class="reply-btn">Send</button>
-  <button type="button" class="reply-btn" onclick="replyToLastDM()">Reply to Last DM</button>
-  <button type="button" class="reply-btn" onclick="replyToLastChannel()">Reply to Last Channel</button>
+  <button type="submit" class="reply-btn btn-send">Send</button>
+  <button type="button" class="reply-btn btn-reply-dm" onclick="replyToLastDM()">Reply to Last DM</button>
+  <button type="button" class="reply-btn btn-reply-channel" onclick="replyToLastChannel()">Reply to Last Channel</button>
     </form>
   </div>
+  </div>
 
-  <div class="three-col">
-    <div class="col">
+  <div data-section="threeCol">
+  <div style="margin:20px 20px 0; color:#666; font-size:0.85em; display:flex; align-items:center; gap:6px;"><span class="drag-handle" title="Drag to reorder">&#x2630;</span> 💬 Message Panels <button class="section-hide-btn" onclick="hideSection('threeCol')" title="Hide this section">✕</button></div>
+  <div class="three-col" id="threeColContainer">
+    <div class="col" data-col="dm">
       <div class="lcars-panel">
         <div class="panel-title-row">
-          <h2>Direct Messages</h2>
+          <h2><span class="drag-handle col-drag" title="Drag to reorder">&#x2630;</span> 📨 Direct Messages</h2>
           <button class="collapse-btn" onclick="togglePanel(this)">Collapse</button>
         </div>
         <div class="panel-body">
@@ -3428,10 +5049,10 @@ def dashboard():
         </div>
       </div>
     </div>
-    <div class="col">
+    <div class="col" data-col="channel">
       <div class="lcars-panel">
         <div class="panel-title-row">
-          <h2>Channel Messages</h2>
+          <h2><span class="drag-handle col-drag" title="Drag to reorder">&#x2630;</span> 📡 Channel Messages</h2>
           <button class="collapse-btn" onclick="togglePanel(this)">Collapse</button>
         </div>
         <div class="panel-body">
@@ -3439,10 +5060,10 @@ def dashboard():
         </div>
       </div>
     </div>
-    <div class="col">
+    <div class="col" data-col="nodes">
       <div class="lcars-panel">
         <div class="panel-title-row">
-          <h2>Available Nodes</h2>
+          <h2><span class="drag-handle col-drag" title="Drag to reorder">&#x2630;</span> 📋 Available Nodes</h2>
           <button class="collapse-btn" onclick="togglePanel(this)">Collapse</button>
         </div>
         <div class="panel-body">
@@ -3467,12 +5088,22 @@ def dashboard():
       </div>
     </div>
   </div>
+  </div>
 
+  <div data-section="discordSection">
   <div class="lcars-panel" id="discordSection" style="margin:20px;">
-    <h2>Discord Messages</h2>
+    <h2><span class="drag-handle" title="Drag to reorder">&#x2630;</span> 🎮 Discord Messages <button class="section-hide-btn" onclick="hideSection('discordSection')" title="Hide this section">✕</button></h2>
     <div id="discordMessagesDiv"></div>
   </div>
-  <div class="footer-right-link"><a class="btnlink" href="https://mesh-api.dev" target="_blank">MESH-API v0.6.0 RC1\nby: MR-TBOT</a></div>
+  </div>
+  </div>
+  <div class="footer-center-bar">
+    <a class="btnlink" href="https://www.paypal.com/donate/?business=7DQWLBARMM3FE&no_recurring=0&item_name=Support+the+development+and+growth+of+innovative+MR_TBOT+projects.&currency_code=USD" target="_blank" style="background:#0070ba; border-color:#0070ba; color:#fff;">❤️ Support Development</a>
+    <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
+  </div>
+  <div class="footer-right-link">
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.6.0\nby: MR-TBOT</a>
+  </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
     <div class="modal-content">
@@ -3490,7 +5121,7 @@ def dashboard():
     </div>
   </div>
   <div id="configModal" class="modal-overlay" onclick="if(event.target===this) closeConfigModal()">
-    <div class="modal-content">
+    <div class="modal-content" style="max-width:800px;">
       <div class="modal-header">
         <h3>Configuration Editor</h3>
         <button class="modal-close" onclick="closeConfigModal()">Close</button>
@@ -3501,52 +5132,260 @@ def dashboard():
           <button class="mark-read-btn" onclick="saveConfigFiles()">Save All</button>
           <button class="reply-btn" onclick="downloadConfigBackup()">Download Backup</button>
           <button class="mark-read-btn" onclick="restartMeshAI()" title="Applies settings that require restart">Restart Service</button>
+          <button class="reply-btn" onclick="closeConfigModal(); openWizard();" title="Re-run the first start setup wizard">🧙 Run Setup Wizard</button>
         </div>
         <div style="background:#1a1a1a; border:1px solid var(--theme-color); padding:10px; border-radius:8px; margin-bottom:10px; color:#ccc;">
           <strong>Note:</strong> Changes to providers, connectivity (Wi&#x2011;Fi/Serial/Mesh), or Twilio credentials usually require a restart. Use the <em>Restart</em> button above after saving.
           <br><strong>Extensions</strong> (Discord, Telegram, Slack, MQTT, etc.) are now configured via the <em>Extensions</em> button in the top bar.
         </div>
         <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
-          <button class="reply-btn" onclick="showConfigTab('cfg')">config.json</button>
+          <button class="reply-btn" onclick="showConfigTab('cfg')">⚙️ config.json</button>
+          <button class="reply-btn" onclick="showConfigTab('cfgraw')">📝 Raw JSON</button>
           <button class="reply-btn" onclick="showConfigTab('cmd')">commands_config.json</button>
           <button class="reply-btn" onclick="showConfigTab('motd')">motd.json</button>
         </div>
-        <div id="cfgTab" style="display:block;">
-          <textarea id="cfgEditor" style="width:100%; height:40vh; background:#000; color:#0f0; border:1px solid var(--theme-color);"></textarea>
-          <div style="margin-top:8px; color:#bbb; font-size:0.95em; line-height:1.4;">
-            <details open>
-              <summary style="color:#ffa500; cursor:pointer;">config.json options help</summary>
-              <ul>
-                <li><code>ai_provider</code>: lmstudio | openai | ollama | claude | gemini | grok | openrouter | groq | deepseek | mistral | openai_compatible — selects the AI backend.</li>
-                <li><code>system_prompt</code>: System role text sent to the AI.</li>
-                <li><code>lmstudio_url</code>, <code>lmstudio_chat_model</code>, <code>lmstudio_timeout</code>: LM Studio settings.</li>
-                <li><code>openai_api_key</code>, <code>openai_model</code>, <code>openai_timeout</code>: OpenAI settings.</li>
-                <li><code>ollama_url</code>, <code>ollama_model</code>, <code>ollama_timeout</code>, <code>ollama_keep_alive</code>, <code>ollama_options</code>: Ollama settings.</li>
-                <li><code>claude_api_key</code>, <code>claude_model</code>, <code>claude_timeout</code>: Claude (Anthropic) settings.</li>
-                <li><code>gemini_api_key</code>, <code>gemini_model</code>, <code>gemini_timeout</code>: Gemini (Google) settings.</li>
-                <li><code>grok_api_key</code>, <code>grok_model</code>, <code>grok_timeout</code>: Grok (xAI) settings.</li>
-                <li><code>openrouter_api_key</code>, <code>openrouter_model</code>, <code>openrouter_timeout</code>: OpenRouter settings (model format: <code>provider/model</code>).</li>
-                <li><code>groq_api_key</code>, <code>groq_model</code>, <code>groq_timeout</code>: Groq settings.</li>
-                <li><code>deepseek_api_key</code>, <code>deepseek_model</code>, <code>deepseek_timeout</code>: DeepSeek settings.</li>
-                <li><code>mistral_api_key</code>, <code>mistral_model</code>, <code>mistral_timeout</code>: Mistral AI settings.</li>
-                <li><code>openai_compatible_url</code>, <code>openai_compatible_api_key</code>, <code>openai_compatible_model</code>, <code>openai_compatible_timeout</code>: Any OpenAI-compatible API.</li>
-                <li><code>reply_in_channels</code>, <code>reply_in_directs</code>, <code>ai_respond_on_longfast</code>: Reply policy.</li>
-                <li><code>chunk_size</code> and <code>max_ai_chunks</code>: Max characters per chunk and number of chunks sent.</li>
-                <li><code>use_wifi</code>, <code>wifi_host</code>/<code>wifi_port</code>; <code>serial_port</code>/<code>serial_baud</code>; <code>use_mesh_interface</code>: Connectivity modes.</li>
-                <li><code>enable_twilio</code> and <code>enable_smtp</code>: Emergency SMS/Email alerts.</li>
-                <li style="color:#ffa500;">Extensions (Discord, Telegram, Slack, MQTT, Home Assistant, etc.) each have their own <code>config.json</code> under <code>extensions/&lt;name&gt;/</code>. Use the <strong>Extensions</strong> button to manage them.</li>
-              </ul>
-            </details>
+        <div id="cfgTab" style="display:block; max-height:55vh; overflow-y:auto; padding-right:6px;">
+          <style>
+            .cfg-section { border:1px solid #333; border-radius:8px; margin-bottom:10px; overflow:hidden; }
+            .cfg-section-hdr { background:#1a1a1a; padding:8px 12px; cursor:pointer; display:flex; align-items:center; gap:8px; font-weight:bold; color:var(--theme-color); user-select:none; }
+            .cfg-section-hdr:hover { background:#222; }
+            .cfg-section-hdr .cfg-arrow { transition:transform 0.2s; }
+            .cfg-section-hdr.collapsed .cfg-arrow { transform:rotate(-90deg); }
+            .cfg-section-body { padding:10px 12px; display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; }
+            .cfg-section-body.hidden { display:none; }
+            .cfg-field { display:flex; flex-direction:column; gap:2px; }
+            .cfg-field.full { grid-column:1/-1; }
+            .cfg-field label { color:#aaa; font-size:0.85em; }
+            .cfg-field input[type=text], .cfg-field input[type=number], .cfg-field input[type=password], .cfg-field select, .cfg-field textarea {
+              background:#111; color:#eee; border:1px solid #444; border-radius:4px; padding:6px 8px; font-size:0.9em; font-family:inherit;
+            }
+            .cfg-field input:focus, .cfg-field select:focus, .cfg-field textarea:focus { border-color:var(--theme-color); outline:none; }
+            .cfg-field .cfg-check { display:flex; align-items:center; gap:8px; flex-direction:row; }
+            .cfg-field .cfg-check input { width:18px; height:18px; accent-color:var(--theme-color); }
+            .ai-provider-section { display:none; grid-column:1/-1; }
+            .ai-provider-section .cfg-section-body { padding:8px 0 0 0; }
+            @media (max-width:600px) { .cfg-section-body { grid-template-columns:1fr; } }
+          </style>
+          <script>
+          function toggleCfgSection(el) {
+            el.classList.toggle('collapsed');
+            el.nextElementSibling.classList.toggle('hidden');
+          }
+          </script>
+
+          <!-- Connection -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🔌 Connection</div>
+            <div class="cfg-section-body">
+              <div class="cfg-field"><label>Serial Port</label><input type="text" id="cfg_serial_port" placeholder="/dev/ttyUSB0"></div>
+              <div class="cfg-field"><label>Serial Baud</label><input type="number" id="cfg_serial_baud" placeholder="460800"></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_wifi"><label for="cfg_use_wifi">Use Wi-Fi</label></div></div>
+              <div class="cfg-field"><label>Wi-Fi Host</label><input type="text" id="cfg_wifi_host" placeholder="192.168.x.x"></div>
+              <div class="cfg-field"><label>Wi-Fi Port</label><input type="number" id="cfg_wifi_port" placeholder="4403"></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_bluetooth"><label for="cfg_use_bluetooth">Use Bluetooth</label></div></div>
+              <div class="cfg-field"><label>BLE Address</label><input type="text" id="cfg_ble_address" placeholder="BLE address"></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_mesh_interface"><label for="cfg_use_mesh_interface">Use Mesh Interface</label></div></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_debug"><label for="cfg_debug">Debug Mode</label></div></div>
+            </div>
+          </div>
+
+          <!-- AI Provider -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🤖 AI Provider</div>
+            <div class="cfg-section-body">
+              <div class="cfg-field full"><label>Provider</label>
+                <select id="cfg_ai_provider" onchange="showProviderFields()">
+                  <option value="">-- Select --</option>
+                  <option value="lmstudio">LM Studio</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="ollama">Ollama</option>
+                  <option value="claude">Claude (Anthropic)</option>
+                  <option value="gemini">Gemini (Google)</option>
+                  <option value="grok">Grok (xAI)</option>
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="groq">Groq</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="mistral">Mistral</option>
+                  <option value="openai_compatible">OpenAI Compatible</option>
+                </select>
+              </div>
+              <!-- LM Studio -->
+              <div id="ai_sec_lmstudio" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field full"><label>LM Studio URL</label><input type="text" id="cfg_lmstudio_url" placeholder="http://localhost:1234/v1/chat/completions"></div>
+                <div class="cfg-field"><label>Chat Model</label><input type="text" id="cfg_lmstudio_chat_model"></div>
+                <div class="cfg-field"><label>Embedding Model</label><input type="text" id="cfg_lmstudio_embedding_model"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_lmstudio_timeout"></div>
+              </div></div>
+              <!-- OpenAI -->
+              <div id="ai_sec_openai" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_openai_api_key"></div>
+                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_openai_model" placeholder="gpt-4.1-mini"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_openai_timeout"></div>
+              </div></div>
+              <!-- Ollama -->
+              <div id="ai_sec_ollama" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field full"><label>Ollama URL</label><input type="text" id="cfg_ollama_url" placeholder="http://localhost:11434/api/generate"></div>
+                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_ollama_model" placeholder="llama3"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_ollama_timeout"></div>
+                <div class="cfg-field"><label>Keep Alive</label><input type="text" id="cfg_ollama_keep_alive" placeholder="10m"></div>
+                <div class="cfg-field"><label>Max Parallel</label><input type="number" id="cfg_ollama_max_parallel"></div>
+              </div></div>
+              <!-- Claude -->
+              <div id="ai_sec_claude" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_claude_api_key"></div>
+                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_claude_model" placeholder="claude-sonnet-4-20250514"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_claude_timeout"></div>
+              </div></div>
+              <!-- Gemini -->
+              <div id="ai_sec_gemini" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_gemini_api_key"></div>
+                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_gemini_model" placeholder="gemini-2.0-flash"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_gemini_timeout"></div>
+              </div></div>
+              <!-- Grok -->
+              <div id="ai_sec_grok" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_grok_api_key"></div>
+                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_grok_model" placeholder="grok-3"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_grok_timeout"></div>
+              </div></div>
+              <!-- OpenRouter -->
+              <div id="ai_sec_openrouter" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_openrouter_api_key"></div>
+                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_openrouter_model" placeholder="openai/gpt-4.1-mini"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_openrouter_timeout"></div>
+              </div></div>
+              <!-- Groq -->
+              <div id="ai_sec_groq" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_groq_api_key"></div>
+                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_groq_model" placeholder="llama-3.3-70b-versatile"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_groq_timeout"></div>
+              </div></div>
+              <!-- DeepSeek -->
+              <div id="ai_sec_deepseek" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_deepseek_api_key"></div>
+                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_deepseek_model" placeholder="deepseek-chat"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_deepseek_timeout"></div>
+              </div></div>
+              <!-- Mistral -->
+              <div id="ai_sec_mistral" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_mistral_api_key"></div>
+                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_mistral_model" placeholder="mistral-small-latest"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_mistral_timeout"></div>
+              </div></div>
+              <!-- OpenAI Compatible -->
+              <div id="ai_sec_openai_compatible" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field full"><label>API URL</label><input type="text" id="cfg_openai_compatible_url"></div>
+                <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_openai_compatible_api_key"></div>
+                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_openai_compatible_model"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_openai_compatible_timeout"></div>
+              </div></div>
+            </div>
+          </div>
+
+          <!-- AI Behavior -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 💬 AI Behavior</div>
+            <div class="cfg-section-body">
+              <div class="cfg-field full"><label>System Prompt</label><textarea id="cfg_system_prompt" rows="3" style="resize:vertical;"></textarea></div>
+              <div class="cfg-field"><label>AI Command Prefix</label><input type="text" id="cfg_ai_command" placeholder="e.g. /ai"></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_reply_in_channels"><label for="cfg_reply_in_channels">Reply in Channels</label></div></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_reply_in_directs"><label for="cfg_reply_in_directs">Reply in Direct Messages</label></div></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_ai_respond_on_longfast"><label for="cfg_ai_respond_on_longfast">AI Respond on LongFast</label></div></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_respond_to_mqtt_messages"><label for="cfg_respond_to_mqtt_messages">Respond to MQTT Messages</label></div></div>
+            </div>
+          </div>
+
+          <!-- Chunking -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> ✂️ Message Chunking</div>
+            <div class="cfg-section-body">
+              <div class="cfg-field"><label>Chunk Size (chars)</label><input type="number" id="cfg_chunk_size" placeholder="200"></div>
+              <div class="cfg-field"><label>Max AI Chunks</label><input type="number" id="cfg_max_ai_chunks" placeholder="5"></div>
+              <div class="cfg-field"><label>Chunk Delay (sec)</label><input type="number" id="cfg_chunk_delay" placeholder="10"></div>
+            </div>
+          </div>
+
+          <!-- Node Identity -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 📻 Node Identity</div>
+            <div class="cfg-section-body">
+              <div class="cfg-field"><label>AI Node Name</label><input type="text" id="cfg_ai_node_name" placeholder="Mesh-API-Alpha"></div>
+              <div class="cfg-field"><label>Location String</label><input type="text" id="cfg_local_location_string" placeholder="@ YOUR LOCATION"></div>
+              <div class="cfg-field"><label>Force Node Num</label><input type="text" id="cfg_force_node_num" placeholder="null = auto"></div>
+              <div class="cfg-field"><label>Nodes Online Window (sec)</label><input type="number" id="cfg_nodes_online_window_sec" placeholder="7200"></div>
+              <div class="cfg-field"><label>Max Message Log</label><input type="number" id="cfg_max_message_log" placeholder="0 = unlimited"></div>
+            </div>
+          </div>
+
+          <!-- Channels -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 📡 Channel Names</div>
+            <div class="cfg-section-body">
+              <div class="cfg-field"><label>Ch 0</label><input type="text" id="cfg_ch_0" placeholder="LongFast"></div>
+              <div class="cfg-field"><label>Ch 1</label><input type="text" id="cfg_ch_1" placeholder="Channel 1"></div>
+              <div class="cfg-field"><label>Ch 2</label><input type="text" id="cfg_ch_2" placeholder="Channel 2"></div>
+              <div class="cfg-field"><label>Ch 3</label><input type="text" id="cfg_ch_3" placeholder="Channel 3"></div>
+              <div class="cfg-field"><label>Ch 4</label><input type="text" id="cfg_ch_4" placeholder="Channel 4"></div>
+              <div class="cfg-field"><label>Ch 5</label><input type="text" id="cfg_ch_5" placeholder="Channel 5"></div>
+              <div class="cfg-field"><label>Ch 6</label><input type="text" id="cfg_ch_6" placeholder="Channel 6"></div>
+              <div class="cfg-field"><label>Ch 7</label><input type="text" id="cfg_ch_7" placeholder="Channel 7"></div>
+              <div class="cfg-field"><label>Ch 8</label><input type="text" id="cfg_ch_8" placeholder="Channel 8"></div>
+              <div class="cfg-field"><label>Ch 9</label><input type="text" id="cfg_ch_9" placeholder="Channel 9"></div>
+            </div>
+          </div>
+
+          <!-- Twilio Alerts -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 📱 Twilio SMS Alerts</div>
+            <div class="cfg-section-body">
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_enable_twilio"><label for="cfg_enable_twilio">Enable Twilio</label></div></div>
+              <div class="cfg-field"><label>Twilio SID</label><input type="password" id="cfg_twilio_sid"></div>
+              <div class="cfg-field"><label>Auth Token</label><input type="password" id="cfg_twilio_auth_token"></div>
+              <div class="cfg-field"><label>From Number</label><input type="text" id="cfg_twilio_from_number" placeholder="+14444444444"></div>
+              <div class="cfg-field"><label>Alert Phone Number</label><input type="text" id="cfg_alert_phone_number" placeholder="+15555555555"></div>
+              <div class="cfg-field"><label>Inbound Target</label>
+                <select id="cfg_twilio_inbound_target">
+                  <option value="channel">Channel</option>
+                  <option value="node">Node</option>
+                </select>
+              </div>
+              <div class="cfg-field"><label>Inbound Channel Index</label><input type="number" id="cfg_twilio_inbound_channel_index" placeholder="1"></div>
+              <div class="cfg-field"><label>Inbound Node</label><input type="text" id="cfg_twilio_inbound_node" placeholder="!FFFFFFFF"></div>
+            </div>
+          </div>
+
+          <!-- SMTP Alerts -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 📧 SMTP Email Alerts</div>
+            <div class="cfg-section-body">
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_enable_smtp"><label for="cfg_enable_smtp">Enable SMTP</label></div></div>
+              <div class="cfg-field"><label>SMTP Host</label><input type="text" id="cfg_smtp_host"></div>
+              <div class="cfg-field"><label>SMTP Port</label><input type="number" id="cfg_smtp_port" placeholder="465"></div>
+              <div class="cfg-field"><label>SMTP User</label><input type="text" id="cfg_smtp_user"></div>
+              <div class="cfg-field"><label>SMTP Password</label><input type="password" id="cfg_smtp_pass"></div>
+              <div class="cfg-field"><label>Alert Email To</label><input type="text" id="cfg_alert_email_to"></div>
+            </div>
           </div>
         </div>
-        <div id="cmdTab" style="display:none;">
-          <textarea id="cmdEditor" style="width:100%; height:40vh; background:#000; color:#0ff; border:1px solid var(--theme-color);"></textarea>
+        <div id="cfgRawTab" style="display:none;">
+          <textarea id="cfgRawEditor" style="width:100%; height:40vh; background:#000; color:#0f0; border:1px solid var(--theme-color); font-family:monospace;"></textarea>
+          <div style="margin-top:6px; color:#888; font-size:0.85em;">Edit raw JSON directly. Saving from this tab overwrites the form values.</div>
+        </div>
+        <div id="cmdTab" style="display:none; max-height:55vh; overflow-y:auto; padding-right:6px;">
+          <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;">
+            <button class="reply-btn" onclick="addCommandRow()">+ Add Command</button>
+            <span style="color:#888;font-size:0.8em;">Each command needs a <strong>/trigger</strong>, a response type, and a description.</span>
+          </div>
+          <div id="cmdFormRows"></div>
+          <textarea id="cmdEditor" style="display:none;"></textarea>
         </div>
         <div id="motdTab" style="display:none;">
-          <textarea id="motdEditor" style="width:100%; height:40vh; background:#000; color:#ffa; border:1px solid var(--theme-color);"></textarea>
+          <label style="color:#ccc;font-weight:bold;display:block;margin-bottom:6px;">Message of the Day</label>
+          <p style="color:#888;font-size:0.8em;margin:0 0 8px;">This message is shown to users when they connect. Keep it short and welcoming.</p>
+          <textarea id="motdEditor" style="width:100%; height:80px; background:#000; color:#ffa; border:1px solid var(--theme-color); font-family:monospace; border-radius:4px; padding:8px; box-sizing:border-box;" placeholder="Welcome message..."></textarea>
         </div>
         <div style="margin-top:8px; color:#ccc;">
-          Tip: Ensure valid JSON for config and commands. The editor will try to pretty-format on save.
+          Tip: Use the form view for easy editing, or Raw JSON for advanced changes.
         </div>
       </div>
     </div>
@@ -3588,39 +5427,168 @@ def dashboard():
       </div>
     </div>
   </div>
+  <div id="settingsOverlay" class="settings-overlay"></div>
   <div class="settings-panel" id="settingsPanel">
-    <h2>UI Settings</h2>
-    <label for="uiColorPicker">Theme Color:</label>
-    <input type="color" id="uiColorPicker" value="#ffa500"><br><br>
-    <label for="hueRotateEnabled">Enable Hue Rotation:</label>
-    <input type="checkbox" id="hueRotateEnabled"><br><br>
-    <label for="hueRotateSpeed">Hue Rotation Speed:</label>
-    <input type="range" id="hueRotateSpeed" min="5" max="60" step="0.1" value="10"><br><br>
-    <label for="soundEnabled">Enable Notification Sound:</label>
-    <input type="checkbox" id="soundEnabled" checked><br><br>
-    <label for="soundVolume">Volume:</label>
-    <input type="range" id="soundVolume" min="0" max="1" step="0.05" value="0.7" oninput="document.getElementById('soundVolumeVal').textContent=Math.round(this.value*100)+'%'">
-    <span id="soundVolumeVal">70%</span><br><br>
-    <label for="soundTypeSelect">Sound Type:</label>
-    <select id="soundTypeSelect" onchange="document.getElementById('customSoundRow').style.display = this.value==='custom'?'block':'none';">
-      <option value="builtin">Built-in Beep</option>
-      <option value="custom">Custom Sound File</option>
-    </select><br><br>
-    <button type="button" class="reply-btn" onclick="playIncomingSound()" style="margin-bottom:10px;">Test Sound</button><br>
-    <div id="customSoundRow" style="display:none;">
-      <label for="soundFile">Sound File:</label>
-      <input type="file" id="soundFile" accept="audio/*"><br>
-      <input type="text" id="soundURL" placeholder="No file selected" readonly style="background:#222;color:#fff;border:none;"><br><br>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h2 style="margin:0;">⚙️ UI Settings</h2>
+      <button onclick="document.getElementById('settingsPanel').classList.remove('open');document.getElementById('settingsOverlay').classList.remove('open');document.getElementById('settingsFloatBtn').textContent='Show UI Settings';" style="background:none;border:1px solid #666;color:#fff;font-size:1.2em;cursor:pointer;border-radius:4px;padding:2px 10px;" title="Close">&times;</button>
     </div>
-    <label for="timezoneSelect">Timezone Offset (hours):</label>
-    <select id="timezoneSelect">
-"""
-    # Timezone selector: -12 to +14
-    for tz in range(-12, 15):
-        html += f'      <option value="{tz}">{tz:+d}</option>\n'
-    html += """    </select><br><br>
-    <div class=\"sticky-actions\">
-      <button id=\"applySettingsBtn\" type=\"button\">Apply Settings</button>
+    <div class="settings-two-col">
+      <div>
+        <h3>🎨 Appearance</h3>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; align-items:center;">
+          <label for="uiColorPicker">Button Theme Color</label>
+          <input type="color" id="uiColorPicker" value="#ffa500">
+
+          <label for="hueRotateEnabled">Hue Rotation</label>
+          <input type="checkbox" id="hueRotateEnabled">
+
+          <label for="hueRotateSpeed">Rotation Speed</label>
+          <input type="range" id="hueRotateSpeed" min="5" max="60" step="0.1" value="10" style="width:100%;">
+
+          <label for="mapStyleSelect">Map Style</label>
+          <select id="mapStyleSelect" style="background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;">
+          </select>
+        </div>
+
+        <h3>🗺️ Offline Map Image</h3>
+        <div style="display:grid; grid-template-columns:auto 1fr; gap:8px 12px; align-items:center;">
+          <label>Image File</label>
+          <input type="file" id="offlineMapUpload" accept="image/*" style="font-size:0.85em;">
+          <label>North Lat</label>
+          <input type="number" id="offlineMapNorth" step="0.001" placeholder="e.g. 40.0" style="background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;width:100%;">
+          <label>South Lat</label>
+          <input type="number" id="offlineMapSouth" step="0.001" placeholder="e.g. 39.0" style="background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;width:100%;">
+          <label>West Lon</label>
+          <input type="number" id="offlineMapWest" step="0.001" placeholder="e.g. -105.0" style="background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;width:100%;">
+          <label>East Lon</label>
+          <input type="number" id="offlineMapEast" step="0.001" placeholder="e.g. -104.0" style="background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;width:100%;">
+          <div style="grid-column:1/-1;display:flex;gap:8px;">
+            <button type="button" onclick="uploadOfflineMapImage()" style="background:#2196f3;color:#fff;border:none;padding:6px 14px;border-radius:6px;font-weight:bold;cursor:pointer;">Upload & Save</button>
+            <button type="button" onclick="clearOfflineMapImage()" style="background:#611;color:#fff;border:none;padding:6px 14px;border-radius:6px;font-weight:bold;cursor:pointer;">Clear</button>
+          </div>
+          <p style="grid-column:1/-1;color:#888;font-size:0.75em;margin:0;">Upload a map image and set lat/lon bounds. Select "Offline Image" in Map Style to use it. The image is stored in your browser.</p>
+        </div>
+
+        <h3>🎨 Section Colors</h3>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; align-items:center;">
+          <label for="colorMapPicker">🗺️ Node Map</label>
+          <input type="color" id="colorMapPicker" value="#ffa500">
+          <label for="colorSendPicker">✉️ Send Message</label>
+          <input type="color" id="colorSendPicker" value="#ffa500">
+          <label for="colorDmPicker">📨 Direct Messages</label>
+          <input type="color" id="colorDmPicker" value="#ffa500">
+          <label for="colorChannelPicker">📡 Channel Messages</label>
+          <input type="color" id="colorChannelPicker" value="#ffa500">
+          <label for="colorNodesPicker">📋 Available Nodes</label>
+          <input type="color" id="colorNodesPicker" value="#ffa500">
+          <label for="colorDiscordPicker">🎮 Discord</label>
+          <input type="color" id="colorDiscordPicker" value="#ffa500">
+        </div>
+
+        <h3>🌐 Timezone</h3>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; align-items:center;">
+          <label for="timezoneSelect">Timezone</label>
+          <select id="timezoneSelect" style="background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;">
+            <option value="-12">UTC-12 (Baker Island)</option>
+            <option value="-11">UTC-11 (Samoa)</option>
+            <option value="-10">UTC-10 (Hawaii)</option>
+            <option value="-9">UTC-9 (Alaska)</option>
+            <option value="-8">UTC-8 (Pacific)</option>
+            <option value="-7">UTC-7 (Mountain)</option>
+            <option value="-6">UTC-6 (Central)</option>
+            <option value="-5">UTC-5 (Eastern)</option>
+            <option value="-4">UTC-4 (Atlantic)</option>
+            <option value="-3">UTC-3 (Buenos Aires)</option>
+            <option value="-2">UTC-2 (Mid-Atlantic)</option>
+            <option value="-1">UTC-1 (Azores)</option>
+            <option value="0">UTC+0 (London / GMT)</option>
+            <option value="1">UTC+1 (Berlin / CET)</option>
+            <option value="2">UTC+2 (Cairo / EET)</option>
+            <option value="3">UTC+3 (Moscow)</option>
+            <option value="4">UTC+4 (Dubai)</option>
+            <option value="5">UTC+5 (Karachi)</option>
+            <option value="6">UTC+6 (Dhaka)</option>
+            <option value="7">UTC+7 (Bangkok)</option>
+            <option value="8">UTC+8 (Singapore)</option>
+            <option value="9">UTC+9 (Tokyo)</option>
+            <option value="10">UTC+10 (Sydney)</option>
+            <option value="11">UTC+11 (Solomon Is.)</option>
+            <option value="12">UTC+12 (Auckland)</option>
+            <option value="13">UTC+13 (Tonga)</option>
+            <option value="14">UTC+14 (Line Islands)</option>
+          </select>
+        </div>
+
+        <h3>📦 Section Visibility</h3>
+        <p style="color:#888;font-size:0.8em;margin:0 0 6px;">Toggle sections on/off. Hidden sections can be restored here.</p>
+        <div id="sectionVisibilityList"></div>
+
+        <h3>📍 My Location (Manual GPS)</h3>
+        <p style="color:#888;font-size:0.8em;margin:0 0 6px;">Set your latitude and longitude manually for distance calculations when your node has no GPS.</p>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; align-items:center;">
+          <label for="myLatInput">Latitude</label>
+          <input type="number" id="myLatInput" step="0.00001" placeholder="e.g. 40.7128" style="background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;width:100%;box-sizing:border-box;">
+          <label for="myLonInput">Longitude</label>
+          <input type="number" id="myLonInput" step="0.00001" placeholder="e.g. -74.0060" style="background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;width:100%;box-sizing:border-box;">
+          <div style="grid-column:1/-1;color:#666;font-size:0.75em;">Leave blank to use the connected node's GPS. Manual values override node GPS for distance and map "You" marker.</div>
+        </div>
+
+        <h3>📡 Channel Names</h3>
+        <p style="color:#888;font-size:0.8em;margin:0 0 6px;">Rename channels in the UI. Names are pulled from your node automatically. Override them here.</p>
+        <div id="channelNamesList" style="display:grid; grid-template-columns:auto 1fr; gap:4px 8px; align-items:center;"></div>
+      </div>
+      <div>
+        <h3>🔊 Notification Sounds</h3>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; align-items:center;">
+          <label for="soundEnabled">Sound Enabled</label>
+          <input type="checkbox" id="soundEnabled" checked>
+
+          <label for="soundVolume">Volume <span id="soundVolumeVal" style="color:#aaa;">70%</span></label>
+          <input type="range" id="soundVolume" min="0" max="1" step="0.05" value="0.7" oninput="document.getElementById('soundVolumeVal').textContent=Math.round(this.value*100)+'%'" style="width:100%;">
+
+          <label for="soundTypeSelect">Default Sound</label>
+          <div>
+            <select id="soundTypeSelect" style="width:100%;"></select>
+            <button type="button" class="reply-btn" onclick="testSelectedSound()" style="margin-top:4px; font-size:0.85em;">Test</button>
+          </div>
+
+          <label for="soundTypeDmSelect">DM Sound</label>
+          <div>
+            <select id="soundTypeDmSelect" style="width:100%;"></select>
+            <button type="button" class="reply-btn" onclick="testSoundSelect('soundTypeDmSelect')" style="margin-top:4px; font-size:0.85em;">Test</button>
+          </div>
+
+          <label for="soundTypeChannelSelect">Channel Sound</label>
+          <div>
+            <select id="soundTypeChannelSelect" style="width:100%;"></select>
+            <button type="button" class="reply-btn" onclick="testSoundSelect('soundTypeChannelSelect')" style="margin-top:4px; font-size:0.85em;">Test</button>
+          </div>
+        </div>
+
+        <h3>🎵 Custom Sound Library</h3>
+        <p style="color:#888;font-size:0.8em;margin:0 0 6px;">Upload audio files to use as custom notification sounds for any section or node.</p>
+        <div id="customSoundsLibrary"></div>
+        <div style="margin-top:6px;display:flex;gap:6px;align-items:center;">
+          <input type="file" id="customSoundUpload" accept="audio/*" style="font-size:0.85em;">
+          <button type="button" class="reply-btn" style="font-size:0.85em;" onclick="uploadCustomSound()">+ Add Sound</button>
+        </div>
+
+        <h3>📡 Per-Node Sounds</h3>
+        <p style="color:#888;font-size:0.8em;margin:0 0 6px;">Assign unique sounds to specific nodes from the list of available nodes.</p>
+        <div id="nodeSoundEntries"></div>
+        <button type="button" class="reply-btn" style="margin-top:6px;font-size:0.85em;" onclick="addNodeSoundRow(document.getElementById('nodeSoundEntries'),'','two-tone')">+ Add Node Sound</button>
+      </div>
+    </div>
+    <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
+      <h3>ℹ️ About</h3>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.6.0</strong></p>
+      <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
+      <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
+      <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>
+    </div>
+    <div class="sticky-actions" style="margin-top:12px;">
+      <button id="applySettingsBtn" type="button">Apply Settings</button>
     </div>
   </div>
 </div>
@@ -3744,6 +5712,18 @@ def commands_info():
   cmds = [{"command": c, "description": d} for c, d in get_available_commands_list()]
   return jsonify(cmds)
 
+@app.route("/shutdown", methods=["POST"])
+def shutdown_server():
+    """Shut down the MESH-API server (triggered when disclaimer is declined)."""
+    add_script_log("Server shutdown requested via disclaimer decline.")
+    func = request.environ.get("werkzeug.server.shutdown")
+    if func:
+        func()
+    else:
+        import os, signal
+        os.kill(os.getpid(), signal.SIGTERM)
+    return "Server shutting down...", 200
+
 def connect_interface():
     """Return a Meshtastic interface with the baud rate from config.
 
@@ -3817,10 +5797,6 @@ def thread_excepthook(args):
 
 threading.excepthook = thread_excepthook
 
-@app.route("/connection_status", methods=["GET"])
-def connection_status_route():
-    return jsonify({"status": connection_status, "error": last_error_message})
-
 def main():
     global interface, restart_count, server_start_time, reset_event, STARTUP_INFO_PRINTED
     server_start_time = server_start_time or datetime.now(timezone.utc)
@@ -3859,6 +5835,7 @@ def main():
     # Extension System Startup
     # -----------------------------
     global extension_loader
+    app_context = None
     try:
         from extensions.loader import ExtensionLoader
         app_context = {
@@ -3914,6 +5891,9 @@ def main():
             except Exception:
                 pass
             interface = connect_interface()
+            # Update app_context so extensions always see the current interface
+            if app_context is not None:
+                app_context["interface"] = interface
             print("Subscribing to on_receive callback...")
             pub.subscribe(on_receive, "meshtastic.receive")
             print(f"AI provider set to: {AI_PROVIDER}")
@@ -3931,6 +5911,12 @@ def main():
             print("User interrupted the script. Shutting down.")
             add_script_log("Server shutdown via KeyboardInterrupt.")
             break
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError) as e:
+            print(f"⚠️ Connection error: {e}. Attempting to reconnect...")
+            add_script_log(f"Connection error: {e}")
+            time.sleep(5)
+            reset_event.clear()
+            continue
         except OSError as e:
             error_code = getattr(e, 'errno', None) or getattr(e, 'winerror', None)
             if error_code in (10053, 10054, 10060):

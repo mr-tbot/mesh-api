@@ -1,23 +1,16 @@
-# MESH-API v0.6.0 RC1 - Almost Ready for Full Release & Docker Images!
+# MESH-API v0.6.0 - Full Release!
 
-- **v0.6.0 RC1** — Release Candidate 1! Plugin-based extensions system with 30 built-in extensions, 12 AI providers, drop-in plugin architecture, and a fully revamped WebUI with Extensions Manager and improved notification sounds. Docker images are coming with the full release!
+- **v0.6.0** — Full release! Plugin-based extensions system with 30 built-in extensions, 12 AI providers, drop-in plugin architecture, interactive node map, collapsible channel views, draggable dashboard layout, and a fully revamped WebUI. Docker images are coming soon!
 
-> ### ⚠️ A LOT Has Changed — Community Testing Needed!
+> ### Community-Driven Improvements
 >
-> A massive amount of work has landed very quickly — the new plugin-based extensions system, 30+ extensions, OpenClaw AI agent integration, MeshCore bridging, and the full WebUI overhaul all shipped in a compressed timeline. **Bugs almost certainly exist**, especially in:
+> A massive amount of work has landed — the new plugin-based extensions system, 30+ extensions, OpenClaw AI agent integration, MeshCore bridging, and the full WebUI overhaul all shipped in a compressed timeline. **v0.6.0 includes critical bug fixes reported by the community** — thank you to everyone who filed issues and tested!
 >
-> - The **new extension system** (loading, hot-reload, config validation)
-> - **OpenClaw integration** (bidirectional agent bridge, skill/tool interactions)
-> - **Cross-extension interactions** (multiple extensions enabled simultaneously)
-> - **Edge cases** in individual extensions that haven't seen field testing yet
->
-> **I am depending on the community to help test, identify, and crush these bugs.** If something breaks, doesn't work as documented, or behaves unexpectedly — please open a [GitHub Issue](https://github.com/mr-tbot/mesh-api/issues) with as much detail as possible. Every report helps make this project better for everyone.
+> **I am depending on the community to help test, identify, and crush bugs.** If something breaks, doesn't work as documented, or behaves unexpectedly — please open a [GitHub Issue](https://github.com/mr-tbot/mesh-api/issues) with as much detail as possible. Every report helps make this project better for everyone.
 >
 > If MESH-API is useful to you, please consider [making a donation](#-support-mesh-api-development--keep-the-lights-on) — this project is built and maintained by one developer with the help of AI tools, and your support directly fuels continued development.
 
 - PLEASE NOTE - There are new requirements and new config options - v0.6.0 updates many required library versions and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
-
-- Having issues getting up and running?  As of v0.6.0 I have created a custom GPT with Open-AI to assist anyone having problems - give it a try! - https://chatgpt.com/g/g-68d86345f4c4819183c417b3790499c7-mesh-api-setup-assistant
 
 
 
@@ -49,8 +42,8 @@ In short, MESH-API bridges the gap between **mesh services** and **online/locall
 > **Disclaimer:**  
 > This project is **NOT ASSOCIATED** with the official Meshtastic Project. It is provided solely as an extension to add AI and advanced features to your Mesh network.  
 
-> **Release Candidate Warning:**  
-> This version (v0.6.0 RC1) is a release candidate — nearly feature-complete and approaching the full release. While significantly more stable than earlier pre-releases, some features may still have rough edges. Please avoid relying on it for mission‑critical tasks or emergencies. Always have backup communication methods available and use responsibly.  
+> **v0.6.0 — Full Release:**  
+> This is the full v0.6.0 release, incorporating community‑reported bug fixes, a visual dashboard overhaul, and updated dependencies. While significantly more stable than earlier pre‑releases, please avoid relying on it for mission‑critical tasks or emergencies. Always have backup communication methods available and use responsibly.  
 
 >  
 > *I am one robot using other robots to write this code. Some features are still untested in the field. Check the GitHub issues for fixes or feedback!*
@@ -87,12 +80,17 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
   - Trigger alerts that are sent via **Twilio SMS**, **SMTP Email**, and, if enabled, **Discord**.
   - Emergency notifications include GPS coordinates, UTC timestamps, and user messages.
 - **Enhanced REST API & WebUI Dashboard**  
-  - A modern three‑column layout showing direct messages, channel messages, and available nodes. Stacks on mobile; 3‑wide on desktop. Controls (Suffix, Commands, Config, Logs) live in the “Send a Message” header (top‑right).
-  - Additional endpoints include `/messages`, `/nodes`, `/connection_status`, `/logs`, `/logs_stream`, `/send`, `/ui_send`, `/commands_info` (JSON commands list), and a new `/discord_webhook` for inbound Discord messages.
-  - UI customization through settings such as theme color, hue rotation, notification sounds (built-in beep or custom file), and volume control.
-  - Config Editor (WebUI): Click the “Config” button in the header to view/edit `config.json`, `commands_config.json`, and `motd.json` in a tabbed editor. JSON is validated before saving; writes are atomic. Some changes may require a restart to take effect.
+  - A modern three‑column layout showing direct messages, channel messages, and available nodes. Stacks on mobile; 3‑wide on desktop. Controls (⌘ Commands, 🧩 Extensions, ⚙️ Config, 📜 Logs) live in the “Send a Message” header (top‑right).
+  - **Interactive Node Map** — Leaflet.js‑powered map view with markers for all GPS‑enabled nodes. **25 tile providers** including OpenStreetMap, Carto (Light, Dark, Voyager, No‑Label variants), OpenTopoMap, Esri (Street, Satellite, Topo, NatGeo, Light/Dark Gray Canvas, Ocean), Stadia (Stamen Terrain/Toner/Toner Lite/Watercolor, Alidade Smooth/Dark, Outdoors, OSM Bright), Humanitarian OSM, CyclOSM, and OPNVKarte. Defaults to Carto Positron (Light). **Offline map image support** — upload a local map image with lat/lon bounds via settings; Leaflet overlays it as a fully functional map layer with markers, pan, and zoom. Offline detection with fallback notice. Popups include node name, custom name, favorite star, ID, last heard, hop count, DM/PING/PONG buttons, and Google Maps link — all on a single row. Mini DM box over the map includes Send, PING, and PONG on the same row.
+  - **Collapsible Channel Groups** — Each channel is a toggle‑able group with an unread‑count badge. Click the 📻 header to expand/collapse.
+  - **Draggable Dashboard** — All major sections (Send Form, Node Map, Message Panels, Discord) can be reordered via ☰ drag handles. The three message columns (DMs, Channels, Nodes) are also independently sortable. Layout order is saved to localStorage. Sections can be hidden/shown from the UI Settings panel.
+  - **Notification Sounds** — Five built‑in Web Audio API sounds (Two‑Tone Beep, Triple Chirp, Alert Chime, Sonar Ping, Radio Blip) plus a **custom sounds library** supporting multiple uploaded audio files (stored as base64 in localStorage). Separate sound selection for Default, DMs, Channels, and individual nodes — each with its own dropdown populated from built‑in plus all custom sounds. Test button, volume slider, and per‑node sound management in settings.
+  - **Node Enhancements** — Every node shows DM, PING, and PONG buttons, last‑heard time (📡), beacon time, hop count, distance, Show on Map (fly‑to), and Google Maps link on a single line. **Favorite nodes** — toggle a ⭐ star to pin nodes to the top of the Available Nodes list (persisted in localStorage). **Custom node names** — click ✏️ to assign a logical name displayed in cyan alongside the original shortName. Favorites and custom names also appear in map popup titles and tooltip labels.
   - Emoji enhancements: each message has a React button that reveals a compact, hidden emoji picker; choosing an emoji auto‑sends a reaction (DM or channel). The send form includes a Quick Emoji bar that inserts emojis into your draft (does not auto‑send).
-  - Extensions Manager (WebUI): Click the "Extensions" button to view extension status, enable/disable extensions, edit extension configs, and hot-reload all extensions — all from the browser.
+  - Additional endpoints include `/messages`, `/nodes`, `/connection_status`, `/logs`, `/logs_stream`, `/send`, `/ui_send`, `/commands_info` (JSON commands list), and a new `/discord_webhook` for inbound Discord messages.
+  - UI customization through settings panel including button theme color, section colors, 25 map tile styles (default: Carto Light), offline map image upload with lat/lon bounds, hue rotation, notification sounds (built‑in or custom library with multiple files), per‑node sound assignments, section visibility toggles, and volume control. An About section with links to Meshtastic, MeshCore, and the project's GitHub and website.
+  - Config Editor (WebUI): Click the “Config” button in the header to view/edit `config.json`, `commands_config.json`, and `motd.json` in a tabbed editor. JSON is validated before saving; writes are atomic. Some changes may require a restart to take effect.
+  - Extensions Manager (WebUI): Click the “Extensions” button to view extension status, enable/disable extensions, edit extension configs, and hot‑reload all extensions — all from the browser.
 - **Improved Message Chunking & Routing**  
   - Automatically splits long AI responses into configurable chunks with delays to reduce radio congestion.
   - Configurable flags control whether the bot replies to broadcast channels and/or direct messages.
@@ -1786,6 +1784,39 @@ The `extensions/` directory includes 25+ working extensions you can reference:
 
 ## Changelog
 
+### v0.6.0 (Full Release)
+
+#### Bug Fixes
+- **#53 — Home Assistant interface stale after reconnect** — The `app_context["interface"]` reference is now refreshed after every successful reconnect, preventing `None` errors in HA and other extensions. Thanks to [@InstigatorX](https://github.com/InstigatorX) for reporting. *(GitHub Issue #53)*
+- **#51 — AI channel reply routing** — Added detailed dispatch logging to trace AI reply routing across channels and DMs. Verified the routing logic correctly respects `respond_to_broadcast_messages`, `respond_to_dms`, and `ai_respond_on_longfast` flags. Thanks to [@droidblastnz](https://github.com/droidblastnz) for reporting. *(GitHub Issue #51)*
+- **#44 — Stability improvements** — Smart word‑boundary message chunking (never splits mid‑word), `requests.Session()` connection pooling for Ollama calls, `num_predict` parameter to cap AI token generation, cross‑platform `OSError` handling with specific error code checks (errno 19, 32, 107, 108, 110). Thanks to [@omgitsgela](https://github.com/omgitsgela) for reporting. *(GitHub Issue #44)*
+
+#### New Features
+- **Interactive Node Map** — Leaflet.js map view with colored markers for all GPS‑enabled nodes. Dark mode (CARTO dark tiles) and light mode (OpenStreetMap) selectable in settings. Offline detection with a banner notice when tiles are unavailable. Connected node shown as a green circle. Popups display node name, hex ID, last heard, hop count, DM button, and Google Maps link.
+- **Collapsible Channel Groups** — Channel messages are now grouped by channel name. Each group has a clickable 📻 header that expands/collapses the messages. Unread message counts shown as orange pill badges.
+- **Draggable Dashboard Layout** — All major dashboard sections (Send Form, Node Map, Message Panels, Discord) can be reordered via ☰ drag handles. The three message columns (DMs, Channels, Nodes) are independently sortable. Sections can be hidden/shown from the UI Settings panel. Layout order persists in localStorage.
+- **Five Built‑in Notification Sounds** — Two‑Tone Beep, Triple Chirp, Alert Chime, Sonar Ping, Radio Blip generated via Web Audio API. Separate sound assignments for DMs, channels, and per‑node. Per‑node sounds use a dropdown populated from available nodes. Custom sound file upload also supported. Test button and volume slider in the settings panel.
+- **Compact Settings Panel** — UI Settings redesigned as a two‑column grid with emoji‑labeled sections (⚙️ UI Settings). Includes button theme color, section colors, dark/light map style, hue rotation, section visibility toggles, and an About section with links to Meshtastic, MeshCore, and project resources.
+- **Node Enhancements** — DM, PING, and PONG buttons shown for every node. Show on Map (fly‑to) and Google Maps buttons on the same line. Last‑heard time displayed with 📡 icon. Node items rendered as rounded cards with hover effects.
+- **Emoji Section Headers** — All dashboard panels now have emoji prefixes: ✉️ Send a Message, 🗺️ Node Map, 💬 Message Panels, 📨 Direct Messages, 📡 Channel Messages, 📋 Available Nodes, 🎮 Discord Messages.
+- **Differentiated Send Buttons** — Send, Reply to Last DM, and Reply to Last Channel buttons now have distinct colors (green, blue, purple) for quick visual identification.
+- **Welcome Setup Guide** — Initial popup changed from beta disclaimer to a friendly setup guide with configuration steps and links to documentation.
+- **Report a Bug** — Footer button links directly to GitHub Issues for easy bug reporting.
+
+#### Visual Overhaul
+- CSS custom properties (`--bg-primary`, `--bg-panel`, `--bg-input`, `--text-primary`, `--text-muted`, `--border-radius`) for consistent theming.
+- Segoe UI font stack, smooth transitions, hover effects on panels/messages/nodes.
+- Mobile‑responsive breakpoints: collapsible map, stacked masthead, footer, and send form at ≤600px.
+- "❤️ Support this Developer" PayPal donation button added to the footer alongside the version badge.
+
+#### Updated Dependencies
+- protobuf 6.33.5 → 7.34.0
+- meshtastic 2.7.7 → 2.7.8
+- Flask 3.1.2 → 3.1.3
+- twilio 9.10.1 → 9.10.2
+- bleak ≥0.22.0 → ≥2.1.1
+- meshcore ≥2.2.0 → ≥2.2.30
+
 ### v0.6.0 RC1 (Release Candidate 1)
 - **WebUI Extensions Manager**
   - New "Extensions" button in the dashboard toolbar opens a full Extensions Manager modal.
@@ -2011,14 +2042,26 @@ The `extensions/` directory includes 25+ working extensions you can reference:
 ### WebUI Config Editor (new)
 
 - Open the dashboard and click the “Config” button in the header (next to Commands/Logs).
-- A tabbed editor appears with three files:
-  - `config.json` — core app settings (providers, timeouts, routing, integrations, etc.)
-  - `commands_config.json` — custom slash commands and AI prompts
-  - `motd.json` — the Message of the Day string shown in the UI
-- Make edits and click Save. The editor validates JSON before saving (for JSON files) and writes changes atomically to prevent partial/corrupted updates.
-- All `config.json` options are available here since the editor loads and saves the full file.
+- A tabbed editor appears with four views:
+  - **⚙️ config.json** — a form-based editor for all core app settings (providers, timeouts, routing, integrations, etc.)
+  - **📝 Raw JSON** — direct JSON editing for advanced users
+  - **commands_config.json** — a form-based command builder. Add, edit, or remove slash commands. Each command has a trigger (`/mycommand`), a type (Static Response or AI Prompt), a response/prompt value, and a description. No manual JSON editing needed.
+  - **motd.json** — a simple text field for the Message of the Day string
+- Make edits and click Save. The editor validates data before saving and writes changes atomically.
+- **🧙 Run Setup Wizard** — re-run the first-start wizard at any time from the Config Editor header. The wizard pre-populates fields from the existing configuration so you can review and update settings without starting from scratch.
 - Changes to some settings may require restarting the app/container to take effect (e.g., provider, connectivity, or Discord/Twilio credentials).
 - Security note: If you expose the WebUI beyond localhost, protect access to the dashboard since configuration files may contain secrets (API keys, tokens).
+
+### Manual GPS Location
+
+- If your node does not have a GPS module, you can set your latitude and longitude manually in the **UI Settings** panel under "📍 My Location (Manual GPS)".
+- When set, distance calculations to other nodes and the “You” marker on the map will use your manual coordinates instead of the connected node’s GPS.
+- Leave the fields blank to revert to the connected node’s GPS.
+
+### Channel Names from Node
+
+- Channel names are now automatically pulled from the connected Meshtastic node via the `/api/channels` endpoint.
+- You can rename channels in the **UI Settings** panel under "📡 Channel Names". Overrides are stored locally and take priority over node-reported names.
 
 #### WebUI Config Options (Quick Guide)
 
@@ -2405,8 +2448,8 @@ Update `extensions/discord/config.json` with the following keys (or use the WebU
 
 ## Contributing & Disclaimer
 
-- **Release Candidate Notice:**  
-  This release (v0.6.0 RC1) is a release candidate — nearly feature-complete and approaching the full release with Docker images. The extensions system has been tested but some extensions may still have edge cases. Please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues) so they may be investigated and addressed. Field testing is recommended before production use.
+- **v0.6.0 Full Release:**  
+  This is the full v0.6.0 release with community‑driven bug fixes (#53, #51, #44), a redesigned WebUI dashboard, and updated dependencies. The extensions system has been tested but some extensions may still have edge cases. Please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues) so they may be investigated and addressed.
 - **Feedback & Contributions:**  
   Report issues or submit pull requests on GitHub. Your input is invaluable.
 - **Use Responsibly:**  
@@ -2424,12 +2467,14 @@ Update `extensions/discord/config.json` with the following keys (or use the WebU
   rpciwKrQSaRZ1UjPunH8vLJhoM2s4NaYoL
 - **DOGE:**  
   DM79aRx58J6RYuWakHjiELWbNJkTTDj1cv
+- **PayPal:**  
+  [Donate via PayPal](https://www.paypal.com/donate/?business=7DQWLBARMM3FE&no_recurring=0&item_name=Support+the+development+and+growth+of+innovative+MR_TBOT+projects.&currency_code=USD)
 
 ---
 
 ## Conclusion
 
-MESH-API v0.6.0 RC1 is the release candidate — almost ready for the full release and Docker images! This build adds a WebUI Extensions Manager, fixed incoming message notifications, and Docker preparation on top of the powerful 25+ extension plugin system, 12 AI providers, and safer defaults. Whether you’re chatting directly with your node, integrating with Home Assistant, or leveraging multi‑channel alerting (Twilio, Email, Discord), this release offers the most comprehensive and extensible off-grid AI assistant experience yet. Please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues) so they may be investigated and addressed.
+MESH-API v0.6.0 is here! This full release includes community‑driven bug fixes (thanks @InstigatorX, @droidblastnz, @omgitsgela), an interactive node map, collapsible channel groups, draggable dashboard layout, five notification sounds, and a visual CSS overhaul — all on top of the powerful 25+ extension plugin system, 12 AI providers, and safer defaults. Whether you’re chatting directly with your node, integrating with Home Assistant, or leveraging multi‑channel alerting (Twilio, Email, Discord), this release offers the most comprehensive and extensible off‑grid AI assistant experience yet. Please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues).
 
 **Enjoy tinkering, stay safe, and have fun!**  
 Please share your feedback or report issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues).
