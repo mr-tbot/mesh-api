@@ -1897,8 +1897,6 @@ The `extensions/` directory includes 25+ working extensions you can reference:
   - Docker images coming with the full v0.6.0 release!
 - **Version Bump**
   - Updated all version references (banner, footer, README, scripts) to v0.6.0 RC1.
-
-### v0.6.0 Release
 - **Plugin-Based Extensions System**
   - Brand new drop-in plugin architecture with 26+ built-in extensions across 5 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, and Smart Home.
   - Extensions can register slash commands, react to emergencies, observe all mesh messages, expose HTTP endpoints via Flask, and run background polling threads.
