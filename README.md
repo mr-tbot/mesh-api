@@ -371,8 +371,9 @@ See the full config reference in the [MeshCore Extension](#meshcore) section bel
 
 ---
 
-<img width="1698" height="862" alt="image" src="https://github.com/user-attachments/assets/e739e599-ce5b-47d1-82c2-512ad3b0d94b" />
-The latest v0.6.0 Web-UI revamp!  Coming together!
+<img width="2545" height="1272" alt="MESH-API-v0 6 0-FINAL" src="https://github.com/user-attachments/assets/49a26e2c-c5fc-4e84-aee9-531d9d38e2bc" />
+
+The latest v0.6.0 Web-UI revamp!  NEW MAPS FEATURES AND TONS OF NEW GOODIES!
 
 ---
 
