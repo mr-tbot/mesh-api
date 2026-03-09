@@ -1,6 +1,6 @@
 # MESH-API v0.6.0 - Full Release!
 
-- **v0.6.0** — Full release! Plugin-based extensions system with 30 built-in extensions, 12 AI providers, drop-in plugin architecture, interactive node map, collapsible channel views, draggable dashboard layout, and a fully revamped WebUI. Docker images are coming soon!
+- **v0.6.0** — Full release! Plugin-based extensions system with 30 built-in extensions, 12 AI providers, drop-in plugin architecture, interactive node map, collapsible channel views, draggable dashboard layout, and a fully revamped WebUI. **Docker images now available** for x86_64 and ARM64 (Raspberry Pi 4/5)!
 
 > ### Community-Driven Improvements
 >
@@ -123,113 +123,147 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 
 ## Quick Start (Windows)
 
-1. **Download/Clone**  
-  - Clone the repository or copy the **mesh-api** folder to your Desktop.  (Rename and remove "-main" tag from the folder name if downloading as ZIP)
-2. **Install Dependencies:**  
-   - Create a virtual environment:
+1. **Prerequisites**
+   - **Python 3.11+** — Download from [python.org](https://www.python.org/downloads/). During install, check **“Add Python to PATH”**.
+   - **Git** (optional) — [git-scm.com](https://git-scm.com/downloads/win) for cloning, or download the ZIP from GitHub.
+
+2. **Download/Clone**
+   - Clone the repository (or download and extract the ZIP):
      ```bash
-    cd path\to\mesh-api
-     python -m venv venv
-     venv\Scripts\activate
+     git clone https://github.com/mr-tbot/mesh-api.git
+     cd mesh-api
      ```
-   - Upgrade pip and install required packages:
+
+3. **Create & Activate a Virtual Environment:**
+     ```bash
+     python -m venv venv
+     .\venv\Scripts\activate
+     ```
+
+4. **Install Dependencies:**
      ```bash
      pip install --upgrade pip
      pip install -r requirements.txt
      ```
-3. **Configure Files:**  
+
+5. **Configure Files:**
    - Edit `config.json`, `commands_config.json`, and `motd.json` as needed. Refer to the **Configuration** section below.
-4. **Start the Bot:**  
-  - Run the bot by double‑clicking `Run MESH-API - Windows.bat` or by executing:
+   - Or use the **Setup Wizard** on first launch in the WebUI.
+
+6. **Start the Bot:**
+   - Double-click `Run MESH-API - Windows.bat` or run:
      ```bash
-    python mesh-api.py
+     python mesh-api.py
      ```
-5. **Access the WebUI Dashboard:**  
+
+7. **Access the WebUI Dashboard:**
    - Open your browser and navigate to [http://localhost:5000/dashboard](http://localhost:5000/dashboard).
 
 ---
 
 ## Quick Start (Ubuntu / Linux)
 
-1. **Download/Clone**  
-  - Clone the repository or copy the **mesh-api** folder to your preferred directory:
+1. **Prerequisites**
+   - Python 3.11+ and pip:
      ```bash
-    git clone https://github.com/mr-tbot/mesh-api.git
-    cd mesh-api
+     sudo apt update && sudo apt install -y python3 python3-pip python3-venv git
+     ```
+   - Grant serial port access (required for USB-connected Meshtastic devices):
+     ```bash
+     sudo usermod -aG dialout $USER
+     ```
+     Log out and back in for the group change to take effect.
+
+2. **Download/Clone**
+     ```bash
+     git clone https://github.com/mr-tbot/mesh-api.git
+     cd mesh-api
      ```
 
-2. **Create and Activate a Virtual Environment Named `mesh-api`:**  
-   - Create the virtual environment:
+3. **Create & Activate a Virtual Environment:**
      ```bash
-    python3 -m venv mesh-api
-     ```
-   - Activate the virtual environment:
-     ```bash
-    source mesh-api/bin/activate
+     python3 -m venv venv
+     source venv/bin/activate
      ```
 
-3. **Install Dependencies:**  
-   - Upgrade pip and install the required packages:
+4. **Install Dependencies:**
      ```bash
      pip install --upgrade pip
      pip install -r requirements.txt
      ```
 
-4. **Configure Files:**  
-   - Edit `config.json`, `commands_config.json`, and `motd.json` as needed. Refer to the **Configuration** section in the documentation for details.
+5. **Configure Files:**
+   - Edit `config.json`, `commands_config.json`, and `motd.json` as needed. Refer to the **Configuration** section below.
+   - Or use the **Setup Wizard** on first launch in the WebUI.
 
-5. **Start the Bot:**  
-   - Run the bot by executing:
+6. **Start the Bot:**
      ```bash
-    python mesh-api.py
+     python mesh-api.py
      ```
 
-6. **Access the WebUI Dashboard:**  
+7. **Access the WebUI Dashboard:**
    - Open your browser and navigate to [http://localhost:5000/dashboard](http://localhost:5000/dashboard).
 
 
 ## Quick Start (Docker)
 
-1. **Prerequisites**  
-   - Docker installed on your host (Linux, macOS, Windows or Raspberry Pi).  (Current Images Built for Linux x86 & ARM64 Raspberry Pi)
-   - Docker support is currently untested on Windows & MacOS, and the Raspberry Pi image remains fresh and untested - please report back!
-   - A Meshtastic device connected via USB, WiFi, or Bluetooth (BLE)
-   - If needed, uncomment USB sections and set identifiers such as `/dev/ttyUSB0` or `\\.\COM3`.
+Multi-arch Docker images are published for **linux/amd64** (x86_64) and **linux/arm64** (Raspberry Pi 4/5, Apple Silicon).
 
-2. **Prepare the Volume Structure**  
-   - In the root of your project directory:
-  - Extract the "docker-required-volumes.zip" - The included "config" & "logs" folders should be within your "mesh-api folder"
-   - This file structure differs from the standard release to accommodate volumes for docker
-   - These files are placed in order to prevent docker from replacing these with directories on first start and throwing errors.
-   - Make any changes to config files as needed before moving forward.
+1. **Prerequisites**
+   - [Docker Engine](https://docs.docker.com/engine/install/) (or Docker Desktop) installed on your host.
+   - A Meshtastic device connected via USB serial, Wi-Fi, or Bluetooth.
 
-File structure should look like this:
+2. **Prepare the Volume Structure**
+   - The `docker-required-volumes/` folder in the repository contains a ready-to-use `mesh-api/` directory with default configs, all 30 built-in extensions, and empty log files. Copy it to your working directory:
+     ```bash
+     git clone https://github.com/mr-tbot/mesh-api.git
+     cd mesh-api
+     cp -r docker-required-volumes/mesh-api ./mesh-api
+     ```
+   - Edit the config files inside `mesh-api/config/` before starting:
 
-   ```bash
-  mesh-api/
+   ```
+   mesh-api/
    ├── config/
-   │   ├── config.json
-   │   ├── commands_config.json
-   │   └── motd.json
+   │   ├── config.json           # Core configuration (AI provider, connection, etc.)
+   │   ├── commands_config.json   # Custom slash commands
+   │   └── motd.json              # Message of the Day
+   ├── extensions/                # All 30 built-in extensions (add your own here too)
+   │   ├── __init__.py
+   │   ├── base_extension.py
+   │   ├── loader.py
+   │   ├── discord/
+   │   ├── telegram/
+   │   ├── mqtt/
+   │   └── ...  (30 built-in extensions)
    └── logs/
-    ├── script.log
-    ├── messages.log
-    └── messages_archive.json
-```
-
-
-3. **Pull & run the Docker Image using docker-compose**
-   - An example docker-compose-yaml is included in the github repository - please adjust as needed.
-   - From the project directory, run:
-   ```bash
-  docker pull mrtbot/mesh-api:latest
-   docker-compose up -d
+       ├── script.log
+       ├── messages.log
+       └── messages_archive.json
    ```
 
-4. **Access the WebUI Dashboard:**  
+3. **Pull & Run with Docker Compose**
+   - Copy the included `docker-compose.yml` to the same directory as your `mesh-api/` folder, then:
+     ```bash
+     docker compose pull
+     docker compose up -d
+     ```
+   - **USB Serial devices:** Uncomment the `devices` and `/dev` volume lines in `docker-compose.yml` and set your serial device path (e.g. `/dev/ttyUSB0` or `/dev/ttyACM0`).
+   - **Wi-Fi connection:** Set `use_wifi: true` and `wifi_host` in `mesh-api/config/config.json` — no device passthrough needed.
+
+4. **Verify the Container:**
+     ```bash
+     docker compose logs -f mesh-api
+     ```
+
+5. **Access the WebUI Dashboard:**
    - Open your browser and navigate to [http://localhost:5000/dashboard](http://localhost:5000/dashboard).
+   - On first launch the **Setup Wizard** will guide you through initial configuration.
+
+> **Tip:** To add custom extensions, drop the extension folder into `mesh-api/extensions/` on the host — it's volume-mounted into the container so no rebuild is needed. Restart the container with `docker compose restart` to pick up new extensions.
 
 ---
+
 
 ## Supported Mesh Networks
 
@@ -2457,18 +2491,28 @@ Update `extensions/discord/config.json` with the following keys (or use the WebU
 
 ---
 
-## Donations are GRACIOUSLY accepted to stoke development!
+## ❤️ Support MESH-API Development — Keep the Lights On
 
-- **BTC:**  
-  bc1qalnp0xze5t9nner2754k2pj7yjhkrt3uzvzdvt
-- **ETH:**  
-  0xAd640c506f5d2368cAF420a117380820C0C5F61C
-- **XRP:**  
-  rpciwKrQSaRZ1UjPunH8vLJhoM2s4NaYoL
-- **DOGE:**  
-  DM79aRx58J6RYuWakHjiELWbNJkTTDj1cv
-- **PayPal:**  
-  [Donate via PayPal](https://www.paypal.com/donate/?business=7DQWLBARMM3FE&no_recurring=0&item_name=Support+the+development+and+growth+of+innovative+MR_TBOT+projects.&currency_code=USD)
+MESH-API is built and maintained by **one developer** with the help of AI tools. There is no corporate sponsor, no VC funding — just late nights, community feedback, and a passion for off-grid communication.
+
+If MESH-API has been useful to you — whether you're running it on a Raspberry Pi in your go-bag, bridging your local mesh to Discord, or experimenting with AI on LoRa — **please consider making a donation.** Every contribution, no matter the size, directly fuels continued development, bug fixes, new extensions, and keeping this project free and open-source for everyone.
+
+### Donate via PayPal (Preferred)
+
+[![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-blue.svg?logo=paypal&style=for-the-badge)](https://www.paypal.com/donate/?business=7DQWLBARMM3FE&no_recurring=0&item_name=Support+the+development+and+growth+of+innovative+MR_TBOT+projects.&currency_code=USD)
+
+[**Click here to donate via PayPal**](https://www.paypal.com/donate/?business=7DQWLBARMM3FE&no_recurring=0&item_name=Support+the+development+and+growth+of+innovative+MR_TBOT+projects.&currency_code=USD)
+
+### Crypto Donations
+
+| Currency | Address |
+|----------|---------|
+| **BTC** | `bc1qalnp0xze5t9nner2754k2pj7yjhkrt3uzvzdvt` |
+| **ETH** | `0xAd640c506f5d2368cAF420a117380820C0C5F61C` |
+| **XRP** | `rpciwKrQSaRZ1UjPunH8vLJhoM2s4NaYoL` |
+| **DOGE** | `DM79aRx58J6RYuWakHjiELWbNJkTTDj1cv` |
+
+**Thank you to everyone who has donated, filed issues, tested pre-releases, and spread the word.** You are what makes this project possible. 🙏
 
 ---
 
