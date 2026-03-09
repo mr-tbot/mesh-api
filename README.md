@@ -41,7 +41,7 @@ If MESH-API has been useful to you — whether you're running it on a Raspberry 
 
 
 
-**MESH-API** is an experimental project that bridges [Meshtastic](https://meshtastic.org/) LoRa mesh networks with powerful AI chatbots and 3rd party APIs.
+**MESH-API** is an experimental project that bridges [Meshtastic](https://meshtastic.org/) (& now [MeshCore](https://meshcore.co.uk/) )LoRa mesh networks with powerful AI chatbots and 3rd party APIs.
 
 ## What Sets MESH-API Apart?
 
