@@ -12,6 +12,28 @@
 
 - PLEASE NOTE - There are new requirements and new config options - v0.6.0 updates many required library versions and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
 
+## ❤️ Support MESH-API Development — Keep the Lights On
+
+MESH-API is built and maintained by **one developer** with the help of AI tools. There is no corporate sponsor, no VC funding — just late nights, community feedback, and a passion for off-grid communication.
+
+If MESH-API has been useful to you — whether you're running it on a Raspberry Pi in your go-bag, bridging your local mesh to Discord, or experimenting with AI on LoRa — **please consider making a donation.** Every contribution, no matter the size, directly fuels continued development, bug fixes, new extensions, and keeping this project free and open-source for everyone.
+
+### Donate via PayPal (Preferred)
+
+[![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-blue.svg?logo=paypal&style=for-the-badge)](https://www.paypal.com/donate/?business=7DQWLBARMM3FE&no_recurring=0&item_name=Support+the+development+and+growth+of+innovative+MR_TBOT+projects.&currency_code=USD)
+
+[**Click here to donate via PayPal**](https://www.paypal.com/donate/?business=7DQWLBARMM3FE&no_recurring=0&item_name=Support+the+development+and+growth+of+innovative+MR_TBOT+projects.&currency_code=USD)
+
+### Crypto Donations
+
+| Currency | Address |
+|----------|---------|
+| **BTC** | `bc1qalnp0xze5t9nner2754k2pj7yjhkrt3uzvzdvt` |
+| **ETH** | `0xAd640c506f5d2368cAF420a117380820C0C5F61C` |
+| **XRP** | `rpciwKrQSaRZ1UjPunH8vLJhoM2s4NaYoL` |
+| **DOGE** | `DM79aRx58J6RYuWakHjiELWbNJkTTDj1cv` |
+
+**Thank you to everyone who has donated, filed issues, tested pre-releases, and spread the word.** You are what makes this project possible. 🙏
 
 
 
@@ -2491,29 +2513,6 @@ Update `extensions/discord/config.json` with the following keys (or use the WebU
   Modifying this code for nefarious purposes is strictly prohibited. Use at your own risk.
 
 ---
-
-## ❤️ Support MESH-API Development — Keep the Lights On
-
-MESH-API is built and maintained by **one developer** with the help of AI tools. There is no corporate sponsor, no VC funding — just late nights, community feedback, and a passion for off-grid communication.
-
-If MESH-API has been useful to you — whether you're running it on a Raspberry Pi in your go-bag, bridging your local mesh to Discord, or experimenting with AI on LoRa — **please consider making a donation.** Every contribution, no matter the size, directly fuels continued development, bug fixes, new extensions, and keeping this project free and open-source for everyone.
-
-### Donate via PayPal (Preferred)
-
-[![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-blue.svg?logo=paypal&style=for-the-badge)](https://www.paypal.com/donate/?business=7DQWLBARMM3FE&no_recurring=0&item_name=Support+the+development+and+growth+of+innovative+MR_TBOT+projects.&currency_code=USD)
-
-[**Click here to donate via PayPal**](https://www.paypal.com/donate/?business=7DQWLBARMM3FE&no_recurring=0&item_name=Support+the+development+and+growth+of+innovative+MR_TBOT+projects.&currency_code=USD)
-
-### Crypto Donations
-
-| Currency | Address |
-|----------|---------|
-| **BTC** | `bc1qalnp0xze5t9nner2754k2pj7yjhkrt3uzvzdvt` |
-| **ETH** | `0xAd640c506f5d2368cAF420a117380820C0C5F61C` |
-| **XRP** | `rpciwKrQSaRZ1UjPunH8vLJhoM2s4NaYoL` |
-| **DOGE** | `DM79aRx58J6RYuWakHjiELWbNJkTTDj1cv` |
-
-**Thank you to everyone who has donated, filed issues, tested pre-releases, and spread the word.** You are what makes this project possible. 🙏
 
 ---
 
