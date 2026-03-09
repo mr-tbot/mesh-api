@@ -8,7 +8,7 @@
 >
 > **I am depending on the community to help test, identify, and crush bugs.** If something breaks, doesn't work as documented, or behaves unexpectedly — please open a [GitHub Issue](https://github.com/mr-tbot/mesh-api/issues) with as much detail as possible. Every report helps make this project better for everyone.
 >
-> If MESH-API is useful to you, please consider [making a donation](#-support-mesh-api-development--keep-the-lights-on) — this project is built and maintained by one developer with the help of AI tools, and your support directly fuels continued development.
+> If MESH-API is useful to you, please consider MAKING A DONATION — this project is built and maintained by one developer with the help of AI tools, and your support directly fuels continued development.
 
 - PLEASE NOTE - There are new requirements and new config options - v0.6.0 updates many required library versions and brings us into alignment with the 2.7 branch of the Meshtastic Python library!  Old configs should work out of the box - but there are new config flags and a new "description" feature for custom commands in commands_config.json.  Read the changelogs.
 
