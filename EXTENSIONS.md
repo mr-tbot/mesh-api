@@ -1,4 +1,4 @@
-# MESH-API Extensions Reference (v0.6.0)
+# MESH-API Extensions Reference (v0.7.0)
 
 Complete reference for all built-in extensions included with MESH-API.  
 Each extension is a self-contained plugin in the `extensions/` directory with its own `config.json`, `extension.py`, and `__init__.py`.

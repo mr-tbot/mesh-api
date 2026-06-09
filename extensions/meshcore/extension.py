@@ -74,6 +74,16 @@ class MeshCoreExtension(BaseExtension):
     # ── Lifecycle ─────────────────────────────────────────────────────
 
     def on_load(self) -> None:
+        # v0.7.0: MeshCore is now a first-class, core-owned radio. If the core
+        # manager is present, this legacy bridge plugin must not also open the
+        # device (that would double-connect). Defer to the core.
+        if self.app_context.get("meshcore_manager") is not None:
+            self.log(
+                "MeshCore is now a built-in first-class radio (v0.7.0+). This "
+                "bridge plugin is deprecated and will not start. Configure your "
+                "MeshCore device under config.json -> 'meshcore'."
+            )
+            return
         if not MESHCORE_AVAILABLE:
             self.log(
                 "⚠️  'meshcore' Python package is not installed. "

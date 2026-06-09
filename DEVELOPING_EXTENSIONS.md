@@ -333,6 +333,37 @@ def register_routes(self, app) -> None:
 
 ---
 
+## MCP Tools (v0.7.0+)
+
+If the MCP server is enabled (`mcp.enabled` in `config.json`), **every extension
+slash command is automatically exposed** as an MCP tool named `ext_cmd_<command>`,
+so external AI agents can call it with no extra work.
+
+To expose **richer, typed tools** (custom names + JSON-Schema inputs), add two
+optional methods to your extension (duck-typed — no base class change needed):
+
+```python
+def get_mcp_tools(self) -> list[dict]:
+    """Return extra MCP tools this extension provides."""
+    return [{
+        "name": "lookup_city",                 # becomes ext_<slug>_lookup_city
+        "description": "Look up weather for a city",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
+    }]
+
+def call_mcp_tool(self, name: str, arguments: dict) -> str:
+    """Handle a call to one of get_mcp_tools(). Return a text result."""
+    if name == "lookup_city":
+        return self._weather_for(arguments.get("city", ""))
+    return f"Unknown tool: {name}"
+```
+
+---
+
 ## Configuration
 
 ### Reading Config

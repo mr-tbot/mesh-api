@@ -101,16 +101,25 @@ def add_script_log(message):
         if os.path.exists(SCRIPT_LOG_FILE):
             filesize = os.path.getsize(SCRIPT_LOG_FILE)
             if filesize > 100 * 1024 * 1024:
-                with open(SCRIPT_LOG_FILE, "r", encoding="utf-8") as f:
+                # Read tolerantly: an existing log may contain non-UTF-8 bytes,
+                # and a strict decode here would raise on every write, which the
+                # stdout/stderr redirector would re-log — an infinite cascade
+                # ending in RecursionError. errors="replace" prevents that.
+                with open(SCRIPT_LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
                     lines = f.readlines()
                 last_lines = lines[-100:] if len(lines) >= 100 else lines
-                with open(SCRIPT_LOG_FILE, "w", encoding="utf-8") as f:
+                with open(SCRIPT_LOG_FILE, "w", encoding="utf-8", errors="replace") as f:
                     f.writelines(last_lines)
-        with open(SCRIPT_LOG_FILE, "a", encoding="utf-8") as f:
+        with open(SCRIPT_LOG_FILE, "a", encoding="utf-8", errors="replace") as f:
             # append a real newline
             f.write(log_entry + "\n")
     except Exception as e:
-        print(f"⚠️ Could not write to {SCRIPT_LOG_FILE}: {e}")
+        # Use the real stderr directly (not print) so a logging failure can
+        # never recurse back into add_script_log via the StreamToLogger.
+        try:
+            sys.__stderr__.write(f"⚠️ Could not write to {SCRIPT_LOG_FILE}: {e}\n")
+        except Exception:
+            pass
 # Redirect stdout and stderr to our log while still printing to terminal.
 class StreamToLogger(object):
     def __init__(self, logger_func):
@@ -180,7 +189,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.6.0 by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.0 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -359,6 +368,11 @@ DEEPSEEK_TIMEOUT = config.get("deepseek_timeout", 60)
 MISTRAL_API_KEY = config.get("mistral_api_key", "")
 MISTRAL_MODEL = config.get("mistral_model", "mistral-small-latest")
 MISTRAL_TIMEOUT = config.get("mistral_timeout", 60)
+# Hermes (Nous Research) — OpenAI-compatible inference API
+HERMES_API_KEY = config.get("hermes_api_key", "")
+HERMES_URL = config.get("hermes_url", "https://inference-api.nousresearch.com/v1/chat/completions")
+HERMES_MODEL = config.get("hermes_model", "Hermes-4-405B")
+HERMES_TIMEOUT = config.get("hermes_timeout", 60)
 OPENAI_COMPAT_API_KEY = config.get("openai_compatible_api_key", "")
 OPENAI_COMPAT_URL = config.get("openai_compatible_url", "")
 OPENAI_COMPAT_MODEL = config.get("openai_compatible_model", "")
@@ -413,6 +427,25 @@ WIFI_PORT = int(config.get("wifi_port", 4403))
 USE_BLUETOOTH = bool(config.get("use_bluetooth", False))
 BLE_ADDRESS = config.get("ble_address", "")
 USE_MESH_INTERFACE = bool(config.get("use_mesh_interface", False))
+
+# -----------------------------
+# v0.7.0 — Multi-radio (Meshtastic + MeshCore) configuration
+# -----------------------------
+# Meshtastic can now be turned off entirely so MESH-API can run as a
+# standalone MeshCore node (no Meshtastic device required).
+MESHTASTIC_ENABLED = bool(config.get("meshtastic_enabled", True))
+MESHCORE_CONFIG = config.get("meshcore", {}) or {}
+MESHCORE_ENABLED = bool(MESHCORE_CONFIG.get("enabled", False))
+# Which network the web UI sends to by default: "meshtastic", "meshcore",
+# "both", or "auto" (whichever single radio is active; both if both are).
+DEFAULT_SEND_NETWORK = str(config.get("default_send_network", "auto")).lower()
+# Bound the Meshtastic (re)connect so a wedged TCP/Wi-Fi link can't hang forever (issue #58).
+MESHTASTIC_CONNECT_TIMEOUT = int(config.get("meshtastic_connect_timeout_sec", 30))
+# v0.7.0: MCP (Model Context Protocol) server — exposes core + extensions as tools.
+MCP_CONFIG = config.get("mcp", {}) or {}
+MCP_ENABLED = bool(MCP_CONFIG.get("enabled", False))
+# v0.7.0: firmware & software update manager.
+FIRMWARE_CONFIG = config.get("firmware", {}) or {}
 
 # Safeguards and network behavior toggles
 # - ai_respond_on_longfast: if False (default), the bot will NOT reply on channel 0 (LongFast)
@@ -472,6 +505,17 @@ MOTD_COMMAND = f"/motd-{AI_SUFFIX}"
 app = Flask(__name__)
 messages = []
 interface = None
+# v0.7.0: core-owned MeshCore radio manager (set up in main()).
+meshcore_manager = None
+# v0.7.0: MCP server (set up in main()).
+mcp_server = None
+# v0.7.0: firmware update manager (set up in main()).
+firmware_updater = None
+# Staged-startup guard: when both radios share a USB bus we start MeshCore only
+# after Meshtastic has connected, to avoid handshake-breaking bus contention.
+_meshcore_started = threading.Event()
+# Recent bridged-message fingerprints to break cross-network echo loops.
+_bridge_recent = []
 STARTUP_INFO_PRINTED = False  # guard to avoid duplicate startup prints
 
 lastDMNode = None
@@ -715,11 +759,14 @@ def get_node_shortname(node_id):
         return user_dict.get("shortName", f"Node_{node_id}")
     return f"Node_{node_id}"
 
-def log_message(node_id, text, is_emergency=False, reply_to=None, direct=False, channel_idx=None):
-    if node_id != "WebUI":
-        display_id = f"{get_node_shortname(node_id)} ({node_id})"
-    else:
+def log_message(node_id, text, is_emergency=False, reply_to=None, direct=False, channel_idx=None,
+                network="meshtastic", display_name=None):
+    if node_id == "WebUI":
         display_id = "WebUI"
+    elif display_name:
+        display_id = f"{display_name} ({node_id})"
+    else:
+        display_id = f"{get_node_shortname(node_id)} ({node_id})"
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     entry = {
         "timestamp": timestamp,
@@ -729,7 +776,8 @@ def log_message(node_id, text, is_emergency=False, reply_to=None, direct=False, 
         "emergency": is_emergency,
         "reply_to": reply_to,
         "direct": direct,
-        "channel_idx": channel_idx
+        "channel_idx": channel_idx,
+        "network": network,
     }
     messages.append(entry)
     if len(messages) > 100:
@@ -932,18 +980,36 @@ def send_to_openai(user_message):
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_message}
         ],
-        "max_tokens": MAX_RESPONSE_LENGTH
     }
+    # GPT-5 / o-series are *reasoning* models: hidden reasoning tokens are
+    # counted against the completion budget, so a small max_tokens leaves no
+    # room for visible text (the user just gets an empty reply). They also
+    # require 'max_completion_tokens' instead of 'max_tokens'. Detect these and
+    # give them a generous budget; we still truncate the visible answer to
+    # MAX_RESPONSE_LENGTH afterward for the mesh.
+    model_l = (OPENAI_MODEL or "").lower()
+    is_reasoning = model_l.startswith(("gpt-5", "o1", "o3", "o4"))
+    if is_reasoning:
+        # Headroom for reasoning + the visible answer (configurable).
+        payload["max_completion_tokens"] = int(config.get("openai_reasoning_max_tokens", 2000))
+    else:
+        payload["max_tokens"] = MAX_RESPONSE_LENGTH
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=OPENAI_TIMEOUT)
         if r.status_code == 200:
             jr = r.json()
             dprint(f"OpenAI raw => {jr}")
-            content = (
-                jr.get("choices", [{}])[0]
-                  .get("message", {})
-                  .get("content", "🤖 [No response]")
-            )
+            choice0 = (jr.get("choices") or [{}])[0]
+            content = (choice0.get("message") or {}).get("content") or ""
+            if not content.strip():
+                finish = choice0.get("finish_reason")
+                usage = jr.get("usage", {})
+                print(
+                    f"⚠️ OpenAI returned empty content (model={OPENAI_MODEL}, "
+                    f"finish_reason={finish}, usage={usage}). For reasoning "
+                    f"models, raise 'openai_reasoning_max_tokens' in config."
+                )
+                return None
             content = sanitize_model_output(content)
             return content[:MAX_RESPONSE_LENGTH]
         else:
@@ -1140,6 +1206,15 @@ def send_to_mistral(user_message):
         user_message, "Mistral", MISTRAL_API_KEY,
         "https://api.mistral.ai/v1/chat/completions", MISTRAL_MODEL, MISTRAL_TIMEOUT)
 
+def send_to_hermes(user_message):
+    """Nous Research Hermes models via their OpenAI-compatible inference API."""
+    if not HERMES_API_KEY:
+        print("⚠️ No Hermes (Nous Research) API key configured.")
+        return None
+    return _send_to_openai_compatible(
+        user_message, "Hermes", HERMES_API_KEY,
+        HERMES_URL, HERMES_MODEL, HERMES_TIMEOUT)
+
 def send_to_openai_compatible(user_message):
     if not OPENAI_COMPAT_URL:
         print("⚠️ No openai_compatible_url configured.")
@@ -1196,6 +1271,8 @@ def get_ai_response(prompt):
         return send_to_deepseek(prompt)
     elif AI_PROVIDER == "mistral":
         return send_to_mistral(prompt)
+    elif AI_PROVIDER == "hermes":
+        return send_to_hermes(prompt)
     elif AI_PROVIDER == "openai_compatible":
         return send_to_openai_compatible(prompt)
     elif AI_PROVIDER == "home_assistant":
@@ -1369,6 +1446,8 @@ def handle_command(cmd, full_text, sender_id):
     return "🚨 Emergency alert sent. Stay safe."
   elif cmd == "/ping":
     return "pong"
+  elif cmd == "/pong":
+    return "ping"
   elif cmd == "/test":
     sn = get_node_shortname(sender_id)
     return f"Hello {sn}! Received {LOCAL_LOCATION_STRING} by {AI_NODE_NAME}."
@@ -1515,6 +1594,216 @@ def parse_incoming_text(text, sender_id, is_direct, channel_idx):
     return route_message_text(text, channel_idx)
   return None
 
+# -----------------------------
+# v0.7.0 — Network-agnostic message pipeline
+# -----------------------------
+# Both radios (Meshtastic + MeshCore) funnel inbound traffic through the same
+# routing/response path so that slash commands, the AI assistant, and *every*
+# extension/plugin work identically regardless of which network a message came
+# from. This is the core of the multi-radio design and the fix for the issue
+# where MeshCore-originated messages never reached plugins like Telegram.
+
+def notify_extensions_inbound(network, sender_id, sender_name, text, is_direct, channel_idx, via_mqtt=False):
+    """Broadcast an inbound message to all extensions (plugins)."""
+    if not extension_loader:
+        return
+    try:
+        msg_meta = {
+            "sender_id": sender_id,
+            "sender_info": f"{sender_name} ({sender_id})",
+            "channel_idx": channel_idx,
+            "is_direct": is_direct,
+            "via_mqtt": via_mqtt,
+            "network": network,
+        }
+        extension_loader.broadcast_on_message(text, msg_meta)
+    except Exception as e:
+        dprint(f"Extension on_message error: {e}")
+
+
+def dispatch_response(network, text, is_direct, dest, channel_idx, reply_target=None):
+    """Send a response out over the given network (meshtastic|meshcore|both)."""
+    if network in ("meshcore", "both"):
+        if meshcore_manager is not None and meshcore_manager.is_connected:
+            if reply_target and reply_target.get("kind") == "dm":
+                meshcore_manager.send_dm(reply_target.get("key", ""), text)
+            elif reply_target and reply_target.get("kind") == "channel":
+                meshcore_manager.send_channel(int(reply_target.get("channel", 0)), text)
+            elif is_direct and isinstance(dest, str) and dest.startswith("!mc-"):
+                meshcore_manager.send_dm(dest.replace("!mc-", ""), text)
+            else:
+                meshcore_manager.send_channel(int(channel_idx or 0), text)
+        if network == "meshcore":
+            return
+    # Meshtastic (also the second leg of "both")
+    if is_direct and dest is not None and not (isinstance(dest, str) and dest.startswith("!mc-")):
+        send_direct_chunks(interface, text, dest)
+    elif not is_direct:
+        send_broadcast_chunks(interface, text, int(channel_idx or 0))
+
+
+def resolve_send_networks(requested):
+    """Resolve a requested send target into a concrete list of networks."""
+    requested = (requested or DEFAULT_SEND_NETWORK or "auto").lower()
+    mt_active = MESHTASTIC_ENABLED and interface is not None
+    mc_active = meshcore_manager is not None and meshcore_manager.is_connected
+    if requested == "both":
+        return ["meshtastic", "meshcore"]
+    if requested in ("meshtastic", "meshcore"):
+        return [requested]
+    # "auto": use whichever radios are actually active
+    nets = []
+    if mt_active:
+        nets.append("meshtastic")
+    if mc_active:
+        nets.append("meshcore")
+    return nets or ["meshtastic"]
+
+
+def web_send(message, network, mode, dest_node=None, channel_idx=0):
+    """Outbound send from the web UI / API, honoring the network selection.
+
+    Direct messages route by the destination id's network prefix; broadcasts
+    fan out to every network the user selected (one, the other, or both).
+    """
+    if mode == "direct" and dest_node:
+        if isinstance(dest_node, str) and dest_node.startswith("!mc-"):
+            if meshcore_manager is not None:
+                meshcore_manager.send_dm(dest_node.replace("!mc-", ""), message)
+        else:
+            send_direct_chunks(interface, message, dest_node)
+        return
+    for net in resolve_send_networks(network):
+        if net == "meshcore":
+            if meshcore_manager is not None:
+                meshcore_manager.send_channel(int(channel_idx or 0), message)
+        else:
+            send_broadcast_chunks(interface, message, int(channel_idx or 0))
+
+
+def route_and_respond(network, sender_id, sender_name, text, is_direct, channel_idx,
+                      reply_to_ts=None, reply_target=None):
+    """Route an inbound message through commands/AI and dispatch any reply.
+
+    Safe to call from a worker thread (it may block on AI HTTP calls and an
+    intentional anti-collision delay), so MeshCore's asyncio loop is never
+    blocked.
+    """
+    try:
+        if text.strip().startswith(AI_PREFIX_TAG):
+            AI_NODE_IDS.add(sender_id)
+            return
+        if sender_id in AI_NODE_IDS:
+            return
+        resp = parse_incoming_text(text, sender_id, is_direct, channel_idx)
+        if not resp:
+            return
+        if network == "meshtastic":
+            info_print("[Info] Wait 10s before responding to reduce collisions.")
+            time.sleep(10)
+        ai_out = add_ai_prefix(resp)
+        log_message(AI_NODE_NAME, ai_out, reply_to=reply_to_ts, network=network)
+        # Discord AI-response forwarding (Meshtastic inbound channel only)
+        if (network == "meshtastic" and ENABLE_DISCORD and DISCORD_SEND_AI
+                and DISCORD_INBOUND_CHANNEL_INDEX is not None
+                and channel_idx == DISCORD_INBOUND_CHANNEL_INDEX):
+            send_discord_message(f"🤖 **{AI_NODE_NAME}**: {ai_out}")
+        if extension_loader:
+            try:
+                extension_loader.broadcast_message(ai_out, {
+                    "is_ai_response": True,
+                    "channel_idx": channel_idx,
+                    "sender_id": sender_id,
+                    "is_direct": is_direct,
+                    "network": network,
+                })
+            except Exception as e:
+                dprint(f"Extension send_message error: {e}")
+        dispatch_response(network, ai_out, is_direct, sender_id, channel_idx, reply_target)
+    except Exception as e:
+        print(f"⚠️ route_and_respond error ({network}): {e}")
+
+
+def bridge_to_other_network(source_network, sender_name, text, is_direct, channel_idx):
+    """Mirror a chat message to the *other* mesh network (man-in-the-middle).
+
+    Only active when both radios are enabled and bridging is turned on. Uses a
+    small fingerprint cache to prevent cross-network echo loops.
+    """
+    cfg = MESHCORE_CONFIG
+    if not cfg.get("bridge_enabled", False):
+        return
+    if not (MESHTASTIC_ENABLED and MESHCORE_ENABLED and meshcore_manager is not None):
+        return
+    # Don't bridge slash commands or AI-tagged output.
+    t = (text or "").strip()
+    if not t or t.startswith("/") or t.startswith(AI_PREFIX_TAG):
+        return
+    if is_direct and not cfg.get("bridge_direct_messages", False):
+        return
+    if t in _bridge_recent:
+        return
+    try:
+        if source_network == "meshcore":
+            mapping = cfg.get("bridge_meshcore_channel_to_meshtastic_channel", {})
+            mt_ch = mapping.get(str(channel_idx))
+            if mt_ch is None:
+                return
+            out = f"{cfg.get('meshcore_to_meshtastic_tag', '[MC]')} {sender_name}: {text}"
+            _remember_bridged(out)
+            send_broadcast_chunks(interface, out, int(mt_ch))
+        else:  # meshtastic -> meshcore
+            mapping = cfg.get("bridge_meshtastic_channel_to_meshcore_channel", {})
+            mc_ch = mapping.get(str(channel_idx))
+            if mc_ch is None:
+                return
+            out = f"{cfg.get('meshtastic_to_meshcore_tag', '[MT]')} {sender_name}: {text}"
+            _remember_bridged(out)
+            meshcore_manager.send_channel(int(mc_ch), out)
+    except Exception as e:
+        dprint(f"bridge error: {e}")
+
+
+def _remember_bridged(text):
+    _bridge_recent.append(text)
+    if len(_bridge_recent) > 80:
+        del _bridge_recent[0:len(_bridge_recent) - 80]
+
+
+def handle_meshcore_inbound(network, sender_id, sender_name, text, is_direct, channel_idx, reply_target):
+    """Core callback for messages received from the MeshCore radio.
+
+    Runs on the MeshCore asyncio thread, so the heavy lifting (AI + delays) is
+    offloaded to a worker thread.
+    """
+    try:
+        if text in _bridge_recent:
+            # This is our own bridged echo coming back; log nothing, do nothing.
+            return
+        entry = log_message(
+            sender_id, text,
+            direct=is_direct,
+            channel_idx=(None if is_direct else channel_idx),
+            network=network,
+            display_name=sender_name,
+        )
+        global lastDMNode, lastChannelIndex
+        if is_direct:
+            lastDMNode = sender_id
+        else:
+            lastChannelIndex = channel_idx
+        notify_extensions_inbound(network, sender_id, sender_name, text, is_direct, channel_idx)
+        bridge_to_other_network(network, sender_name, text, is_direct, channel_idx)
+        threading.Thread(
+            target=route_and_respond,
+            args=(network, sender_id, sender_name, text, is_direct, channel_idx),
+            kwargs={"reply_to_ts": entry["timestamp"], "reply_target": reply_target},
+            daemon=True,
+        ).start()
+    except Exception as e:
+        print(f"⚠️ handle_meshcore_inbound error: {e}")
+
+
 def on_receive(packet=None, interface=None, **kwargs):
   dprint(f"on_receive => packet={packet}")
   if not packet or 'decoded' not in packet:
@@ -1542,19 +1831,15 @@ def on_receive(packet=None, interface=None, **kwargs):
     dprint(f"[MSG] from {sender_node} to {raw_to} (ch={ch_idx}): {text}")
     entry = log_message(sender_node, text, direct=(to_node_int != BROADCAST_ADDR), channel_idx=(None if to_node_int != BROADCAST_ADDR else ch_idx))
 
-    # Notify all loaded extensions about the inbound message
-    if extension_loader:
-        try:
-            msg_meta = {
-                "sender_id": sender_node,
-                "sender_info": f"{get_node_shortname(sender_node)} ({sender_node})",
-                "channel_idx": ch_idx,
-                "is_direct": (to_node_int != BROADCAST_ADDR),
-                "via_mqtt": via_mqtt,
-            }
-            extension_loader.broadcast_on_message(text, msg_meta)
-        except Exception as e:
-            dprint(f"Extension on_message error: {e}")
+    # Notify all loaded extensions about the inbound message (network-tagged)
+    notify_extensions_inbound(
+        "meshtastic", sender_node, get_node_shortname(sender_node), text,
+        is_direct=(to_node_int != BROADCAST_ADDR), channel_idx=ch_idx, via_mqtt=via_mqtt,
+    )
+    # Mirror broadcast chat to MeshCore if cross-network bridging is enabled
+    if to_node_int == BROADCAST_ADDR:
+        bridge_to_other_network("meshtastic", get_node_shortname(sender_node), text,
+                                is_direct=False, channel_idx=ch_idx)
 
     global lastDMNode, lastChannelIndex
     if to_node_int != BROADCAST_ADDR:
@@ -1598,34 +1883,9 @@ def on_receive(packet=None, interface=None, **kwargs):
       dprint("Sender is a known AI node; skipping response.")
       return
 
-    resp = parse_incoming_text(text, sender_node, is_direct, ch_idx)
-    if resp:
-      info_print("[Info] Wait 10s before responding to reduce collisions.")
-      time.sleep(10)
-      ai_out = add_ai_prefix(resp)
-      log_message(AI_NODE_NAME, ai_out, reply_to=entry['timestamp'])
-      # If message originated on Discord inbound channel, also send the AI response back to Discord.
-      if ENABLE_DISCORD and DISCORD_SEND_AI and DISCORD_INBOUND_CHANNEL_INDEX is not None and ch_idx == DISCORD_INBOUND_CHANNEL_INDEX:
-        disc_msg = f"🤖 **{AI_NODE_NAME}**: {ai_out}"
-        send_discord_message(disc_msg)
-      # Notify extensions about the AI response
-      if extension_loader:
-        try:
-          ai_meta = {
-            "is_ai_response": True,
-            "channel_idx": ch_idx,
-            "sender_id": sender_node,
-            "is_direct": is_direct,
-          }
-          extension_loader.broadcast_message(ai_out, ai_meta)
-        except Exception as e:
-          dprint(f"Extension send_message error: {e}")
-      if is_direct:
-        info_print(f"[Info] Dispatching AI reply as DM to {sender_node}")
-        send_direct_chunks(interface, ai_out, sender_node)
-      else:
-        info_print(f"[Info] Dispatching AI reply as broadcast on channel {ch_idx}")
-        send_broadcast_chunks(interface, ai_out, ch_idx)
+    # Route through the shared pipeline (commands, AI, extensions, reply dispatch)
+    route_and_respond("meshtastic", sender_node, get_node_shortname(sender_node), text,
+                      is_direct, ch_idx, reply_to_ts=entry['timestamp'])
   except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError) as e:
     print(f"⚠️ Connection error in on_receive: {e}")
     global connection_status
@@ -1659,9 +1919,145 @@ def get_nodes_api():
             node_list.append({
                 "id": nid,
                 "shortName": sn,
-                "longName": ln
+                "longName": ln,
+                "network": "meshtastic",
             })
+    # v0.7.0: include MeshCore contacts so the UI/map sees both networks
+    if meshcore_manager is not None:
+        try:
+            node_list.extend(meshcore_manager.get_nodes())
+        except Exception as e:
+            dprint(f"meshcore get_nodes error: {e}")
     return jsonify(node_list)
+
+
+@app.route("/api/networks", methods=["GET"])
+def api_networks():
+    """Status of both radios so the web UI can adapt what it shows."""
+    mc_status = meshcore_manager.get_status() if meshcore_manager is not None else {
+        "available": False, "enabled": MESHCORE_ENABLED, "connected": False,
+    }
+    return jsonify({
+        "meshtastic": {
+            "enabled": MESHTASTIC_ENABLED,
+            "connected": connection_status == "Connected",
+            "status": connection_status,
+            "error": last_error_message,
+        },
+        "meshcore": mc_status,
+        "default_send_network": DEFAULT_SEND_NETWORK,
+    })
+
+@app.route("/api/meshcore/channels", methods=["GET"])
+def api_meshcore_channels():
+    """MeshCore channels (group chats / private channels) for the send UI."""
+    if meshcore_manager is None:
+        return jsonify([])
+    try:
+        return jsonify(meshcore_manager.get_channels())
+    except Exception as e:
+        dprint(f"meshcore channels error: {e}")
+        return jsonify([])
+
+@app.route("/api/meshcore/contacts", methods=["GET"])
+def api_meshcore_contacts():
+    """MeshCore contacts (DM targets) with pubkeys for the web UI."""
+    if meshcore_manager is None:
+        return jsonify([])
+    try:
+        return jsonify(meshcore_manager.get_contacts())
+    except Exception as e:
+        dprint(f"meshcore contacts error: {e}")
+        return jsonify([])
+
+# -----------------------------
+# v0.7.0: MCP (Model Context Protocol) endpoint
+# -----------------------------
+@app.route("/mcp", methods=["POST", "GET", "DELETE", "OPTIONS"])
+def mcp_endpoint():
+    """MCP Streamable-HTTP endpoint. External AI agents POST JSON-RPC here to
+    call MESH-API core functions and extensions as tools."""
+    if mcp_server is None or not mcp_server.enabled:
+        return jsonify({"error": "MCP server is disabled. Enable 'mcp.enabled' in config."}), 404
+    if request.method == "OPTIONS":
+        return ("", 204, {
+            "Access-Control-Allow-Origin": request.headers.get("Origin", "*"),
+            "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, X-API-Key, Mcp-Session-Id, MCP-Protocol-Version",
+        })
+    if request.method == "GET":
+        # We don't offer a server-initiated SSE stream.
+        return ("Method Not Allowed", 405)
+    if request.method == "DELETE":
+        return ("", 204)
+    body, status, headers = mcp_server.handle_http(request)
+    resp = Response(body, status=status)
+    for k, v in (headers or {}).items():
+        resp.headers[k] = v
+    resp.headers["Access-Control-Allow-Origin"] = request.headers.get("Origin", "*")
+    return resp
+
+@app.route("/api/mcp/info", methods=["GET"])
+def api_mcp_info():
+    """Status/introspection of the MCP server for the web UI."""
+    if mcp_server is None:
+        return jsonify({"enabled": False, "available": False})
+    info = mcp_server.info()
+    info["available"] = True
+    return jsonify(info)
+
+# -----------------------------
+# v0.7.0: firmware / software update endpoints
+# -----------------------------
+@app.route("/api/firmware/status", methods=["GET"])
+def api_firmware_status():
+    """Cached update status for Mesh-API, Meshtastic fw, and MeshCore fw."""
+    if firmware_updater is None:
+        return jsonify({"available": False})
+    try:
+        data = firmware_updater.get_status()
+        data["available"] = True
+        return jsonify(data)
+    except Exception as e:
+        dprint(f"firmware status error: {e}")
+        return jsonify({"available": False, "error": str(e)})
+
+@app.route("/api/firmware/check", methods=["POST"])
+def api_firmware_check():
+    """Force an immediate update check."""
+    if firmware_updater is None:
+        return jsonify({"ok": False, "error": "Firmware updater unavailable"}), 404
+    try:
+        firmware_updater.check_updates()
+        return jsonify({"ok": True, "status": firmware_updater.get_status()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/firmware/flash", methods=["POST"])
+def api_firmware_flash():
+    """Flash Meshtastic firmware (ESP32 only; gated by config). Body: {confirm:bool}."""
+    if firmware_updater is None:
+        return jsonify({"ok": False, "error": "Firmware updater unavailable"}), 404
+    data = request.get_json(silent=True) or {}
+    confirm = bool(data.get("confirm", False))
+    try:
+        return jsonify(firmware_updater.flash_meshtastic(request_confirm=confirm))
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/firmware/channel", methods=["POST"])
+def api_firmware_channel():
+    """Set the release channel (stable/beta/alpha) for a firmware. Body:
+    {which: 'meshtastic'|'meshcore', channel: 'stable'|'beta'|'alpha'}."""
+    if firmware_updater is None:
+        return jsonify({"ok": False, "error": "Firmware updater unavailable"}), 404
+    data = request.get_json(silent=True) or {}
+    which = data.get("which", "")
+    channel = data.get("channel", "stable")
+    try:
+        return jsonify(firmware_updater.set_channel(which, channel))
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/channels", methods=["GET"])
 def get_channels_api():
@@ -1860,6 +2256,26 @@ def dashboard():
                 "hops": hops,
                 "lastHeard": last_heard_str,
             }
+    # v0.7.0: merge MeshCore contacts into the harmonized map / node list
+    try:
+        if meshcore_manager is not None:
+            for n in meshcore_manager.get_nodes():
+                nid = n.get("id")
+                node_gps_info[str(nid)] = {
+                    "lat": n.get("lat"),
+                    "lon": n.get("lon"),
+                    "beacon_time": None,
+                    "hops": None,
+                    "lastHeard": None,
+                    "network": "meshcore",
+                    "shortName": n.get("shortName"),
+                }
+    except Exception as _e:
+        dprint(f"meshcore node inject error: {_e}")
+    # Tag native Meshtastic entries with their network for the adaptive UI
+    for _v in node_gps_info.values():
+        if isinstance(_v, dict):
+            _v.setdefault("network", "meshtastic")
     node_gps_info_json = json.dumps(node_gps_info)
 
     # Get connected node's GPS for distance calculation
@@ -2736,6 +3152,10 @@ def dashboard():
       document.getElementById('modeSwitch').addEventListener('change', function() {
         toggleMode();
       });
+      const netFilterEl = document.getElementById('nodeNetFilter');
+      if (netFilterEl) {
+        netFilterEl.addEventListener('change', function() { updateNodesUI(allNodes, false); });
+      }
       const settingsBtn = document.getElementById('settingsFloatBtn');
       const settingsPanel = document.getElementById('settingsPanel');
       const settingsOverlay = document.getElementById('settingsOverlay');
@@ -3924,6 +4344,15 @@ def dashboard():
           const ts = document.createElement("div");
           ts.className = "timestamp";
           ts.textContent = `📢 ${getTZAdjusted(m.timestamp)} | ${m.node}`;
+          if (m.network) {
+            const isMC = (m.network === 'meshcore');
+            const nb = document.createElement('span');
+            nb.textContent = isMC ? 'MC' : (m.network === 'both' ? 'BOTH' : 'MT');
+            nb.title = isMC ? 'MeshCore' : (m.network === 'both' ? 'Both networks' : 'Meshtastic');
+            nb.style.cssText = 'margin-left:6px;font-size:0.7em;font-weight:bold;padding:1px 5px;border-radius:8px;' +
+              (isMC ? 'background:#6a3df0;color:#fff;' : (m.network === 'both' ? 'background:#ff9800;color:#000;' : 'background:#1e88e5;color:#fff;'));
+            ts.appendChild(nb);
+          }
           const body = document.createElement("div");
           body.textContent = m.message;
           wrap.append(ts, body);
@@ -4121,16 +4550,53 @@ def dashboard():
       if (!isDest) {
         const list = document.getElementById("nodeListDiv");
         let filter = document.getElementById('nodeSearch').value.toLowerCase();
+        const netFilterEl = document.getElementById('nodeNetFilter');
+        const netFilter = netFilterEl ? netFilterEl.value : 'all';
         list.innerHTML = "";
         let filtered = nodes.filter(n =>
+          (netFilter === 'all' || (n.network || 'meshtastic') === netFilter) && (
           (n.shortName && n.shortName.toLowerCase().includes(filter)) ||
           (n.longName && n.longName.toLowerCase().includes(filter)) ||
-          String(n.id).toLowerCase().includes(filter)
+          String(n.id).toLowerCase().includes(filter))
         );
-        // Sort
-        filtered.sort(compareNodes);
+        // Sort: group by network (Meshtastic first, then MeshCore), each
+        // group internally ordered by the chosen sort. This yields separate
+        // on-screen sections per network.
+        const netRank = n => ((n.network || 'meshtastic') === 'meshcore' ? 1 : 0);
+        filtered.sort((a, b) => {
+          const r = netRank(a) - netRank(b);
+          if (r !== 0) return r;
+          return compareNodes(a, b);
+        });
+
+        // Section header helper
+        let lastNet = null;
+        if (!window._nodeNetCollapsed) window._nodeNetCollapsed = {};
+        function addNetSection(net) {
+          const isMC = (net === 'meshcore');
+          const collapsed = !!window._nodeNetCollapsed[net];
+          const hdr = document.createElement('div');
+          hdr.className = 'nodeNetSection';
+          hdr.dataset.net = net;
+          const count = filtered.filter(x => (x.network || 'meshtastic') === net).length;
+          hdr.innerHTML = `<span class="nodeNetToggle" style="display:inline-block;width:14px;">${collapsed ? '▶' : '▼'}</span>` +
+            `<span style="font-size:1.05em;">${isMC ? '🟣 MeshCore' : '📡 Meshtastic'}</span>` +
+            ` <span style="opacity:0.7;font-size:0.85em;">(${count})</span>`;
+          hdr.style.cssText = 'margin:10px 0 4px;padding:4px 8px;font-weight:bold;border-radius:6px;cursor:pointer;user-select:none;' +
+            'border-left:4px solid ' + (isMC ? '#6a3df0' : '#1e88e5') + ';' +
+            'background:' + (isMC ? 'rgba(106,61,240,0.12)' : 'rgba(30,136,229,0.12)') + ';color:#fff;';
+          hdr.title = 'Click to collapse/expand this network';
+          hdr.onclick = function() {
+            window._nodeNetCollapsed[net] = !window._nodeNetCollapsed[net];
+            updateNodesUI(allNodes, false);
+          };
+          list.appendChild(hdr);
+        }
 
         filtered.forEach(n => {
+          const thisNet = (n.network || 'meshtastic');
+          if (thisNet !== lastNet) { addNetSection(thisNet); lastNet = thisNet; }
+          if (window._nodeNetCollapsed[thisNet]) return; // section collapsed
           const d = document.createElement("div");
           d.className = "nodeItem";
           if (isRecentNode(n.id)) d.classList.add("recentNode");
@@ -4161,6 +4627,15 @@ def dashboard():
             nameSpan.innerHTML = `${n.shortName || ''} <span style="color:#ffa500;">(${n.id})</span>`;
             mainLine.appendChild(nameSpan);
           }
+
+          // v0.7.0: network badge (Meshtastic vs MeshCore) so both are distinguishable
+          const netBadge = document.createElement('span');
+          const isMC = (n.network === 'meshcore');
+          netBadge.textContent = isMC ? 'MC' : 'MT';
+          netBadge.title = isMC ? 'MeshCore' : 'Meshtastic';
+          netBadge.style.cssText = 'margin-left:6px;font-size:0.7em;font-weight:bold;padding:1px 5px;border-radius:8px;vertical-align:middle;' +
+            (isMC ? 'background:#6a3df0;color:#fff;' : 'background:#1e88e5;color:#fff;');
+          mainLine.appendChild(netBadge);
 
           const editNameBtn = document.createElement('span');
           editNameBtn.textContent = '✏️';
@@ -4296,7 +4771,8 @@ def dashboard():
         filtered.forEach(n => {
           const opt = document.createElement("option");
           opt.value = n.id;
-          opt.innerHTML = `${n.shortName} (${n.id})`;
+          const tag = (n.network === 'meshcore') ? '🟣' : '📡';
+          opt.innerHTML = `${tag} ${n.shortName} (${n.id})`;
           sel.append(opt);
         });
         sel.value = prevNode;
@@ -4457,9 +4933,20 @@ def dashboard():
           popup += `<button onclick="sendPongToNode('${nid}','${name.replace(/'/g,"\\\'")}')" style="background:#9c27b0;color:#fff;border:none;padding:4px 8px;border-radius:5px;cursor:pointer;font-weight:bold;font-size:0.85em;">🏓 PONG</button>`;
           popup += `<a href='https://www.google.com/maps/search/?api=1&query=${gps.lat},${gps.lon}' target='_blank' style='background:#34a853;color:#fff;border:none;padding:4px 8px;border-radius:5px;text-decoration:none;font-weight:bold;font-size:0.85em;'>🗺️ Maps</a>`;
           popup += `</div>`;
+          // v0.7.0: distinguish networks on the map. MeshCore = purple dot, Meshtastic = default blue pin.
+          let isMC = (gps.network === 'meshcore') || (node && node.network === 'meshcore');
+          let netName = isMC ? 'MeshCore' : 'Meshtastic';
+          popup = `<div style="font-size:0.75em;font-weight:bold;color:${isMC ? '#a98bff' : '#7ec3ff'};margin-bottom:2px;">${isMC ? '🟣 MeshCore' : '🔵 Meshtastic'}</div>` + popup;
           // Create marker with permanent shortname tooltip
-          let marker = L.marker([gps.lat, gps.lon]).bindPopup(popup, {maxWidth: 400});
-          marker.bindTooltip(cName || name, { permanent: true, direction: 'right', offset: [12, 0], className: 'leaflet-marker-label' });
+          let marker;
+          if (isMC) {
+            marker = L.circleMarker([gps.lat, gps.lon], {
+              radius: 8, color: '#6a3df0', fillColor: '#a98bff', fillOpacity: 0.9, weight: 2
+            }).bindPopup(popup, {maxWidth: 400});
+          } else {
+            marker = L.marker([gps.lat, gps.lon]).bindPopup(popup, {maxWidth: 400});
+          }
+          marker.bindTooltip((cName || name) + (isMC ? ' [MC]' : ''), { permanent: true, direction: 'right', offset: [12, 0], className: 'leaflet-marker-label' });
           marker.addTo(nodeMapInstance);
           nodeMapMarkers.push(marker);
           nodeMarkerLookup[nid] = marker;
@@ -4584,21 +5071,207 @@ def dashboard():
         .then(r => r.json())
         .then(d => {
           const s = document.getElementById("connectionStatus");
-          if (d.status !== "Connected") {
+          // Per-network status (v0.7.0): show Meshtastic and/or MeshCore distinctly.
+          fetch("/api/networks").then(r => r.json()).then(net => {
+            const parts = [];
+            let anyConnected = false;
+            let allConnected = true;
+            const mt = net.meshtastic || {};
+            const mc = net.meshcore || {};
+            if (mt.enabled) {
+              const ok = !!mt.connected;
+              anyConnected = anyConnected || ok;
+              allConnected = allConnected && ok;
+              parts.push(`📡 Meshtastic: ${ok ? 'Connected' : (mt.error || 'Disconnected')} ${ok ? '🟢' : '🔴'}`);
+            }
+            if (mc.enabled || mc.connected) {
+              const ok = !!mc.connected;
+              anyConnected = anyConnected || ok;
+              allConnected = allConnected && ok;
+              let extra = ok && mc.contacts != null ? ` (${mc.contacts} contacts)` : '';
+              parts.push(`🟣 MeshCore: ${ok ? 'Connected' : 'Disconnected'}${extra} ${ok ? '🟢' : '🔴'}`);
+            }
+            if (!parts.length) {
+              // Fallback to legacy single-status display.
+              parts.push(d.status === 'Connected' ? 'Connected' : `Connection Error: ${d.error || 'Disconnected'}`);
+              anyConnected = d.status === 'Connected';
+              allConnected = anyConnected;
+            }
             s.style.display = "block";
-            s.style.background = "red";
-            s.style.minHeight = "28px";
-            s.textContent = `Connection Error: ${d.error || 'Disconnected'}`;
-          } else {
-            s.style.display = "block";
-            s.style.background = "green";
-            s.style.minHeight = "20px";
-            s.textContent = "Connected";
-          }
+            s.style.minHeight = allConnected ? "20px" : "28px";
+            s.style.background = allConnected ? "green" : (anyConnected ? "#b8860b" : "red");
+            s.innerHTML = parts.join('&nbsp;&nbsp;|&nbsp;&nbsp;');
+          }).catch(() => {
+            // Network endpoint failed: legacy behavior.
+            if (d.status !== "Connected") {
+              s.style.display = "block"; s.style.background = "red"; s.style.minHeight = "28px";
+              s.textContent = `Connection Error: ${d.error || 'Disconnected'}`;
+            } else {
+              s.style.display = "block"; s.style.background = "green"; s.style.minHeight = "20px";
+              s.textContent = "Connected";
+            }
+          });
         })
         .catch(e => console.error(e));
     }
     setInterval(pollStatus, 5000);
+
+    // v0.7.0: adapt the UI to whichever radios are present (Meshtastic / MeshCore / both)
+    function adaptNetworksUI() {
+      fetch("/api/networks")
+        .then(r => r.json())
+        .then(d => {
+          const mtOn = d.meshtastic && d.meshtastic.enabled;
+          const mcOn = d.meshcore && (d.meshcore.enabled || d.meshcore.connected);
+          const field = document.getElementById('networkField');
+          // Only show the network picker when both radios are in play.
+          if (field) field.style.display = (mtOn && mcOn) ? 'block' : 'none';
+          const sel = document.getElementById('networkSel');
+          if (sel && !(mtOn && mcOn)) {
+            sel.value = mcOn && !mtOn ? 'meshcore' : 'meshtastic';
+          }
+          const badge = document.getElementById('networksBadge');
+          if (badge) {
+            const parts = [];
+            if (mtOn) parts.push('Meshtastic ' + (d.meshtastic.connected ? '🟢' : '🔴'));
+            if (mcOn) parts.push('MeshCore ' + (d.meshcore.connected ? '🟢' : '🔴'));
+            badge.textContent = parts.join('  ·  ');
+            badge.style.display = parts.length ? 'inline-block' : 'none';
+          }
+        })
+        .catch(e => console.error(e));
+    }
+    setInterval(adaptNetworksUI, 8000);
+    adaptNetworksUI();
+
+    // v0.7.0: software/firmware update notifications (Mesh-API / Meshtastic / MeshCore)
+    let _updatesData = null;
+    function refreshUpdatesBadge() {
+      fetch('/api/firmware/status').then(r => r.json()).then(d => {
+        if (!d || d.available === false) return;
+        _updatesData = d;
+        const badge = document.getElementById('updatesBadge');
+        const n = d.updates_available || 0;
+        if (badge) {
+          if (n > 0) { badge.textContent = n; badge.style.display = 'inline-block'; }
+          else { badge.style.display = 'none'; }
+        }
+        const modal = document.getElementById('updatesModal');
+        if (modal && modal.style.display === 'flex') renderUpdates(d);
+      }).catch(() => {});
+    }
+    setInterval(refreshUpdatesBadge, 60000);
+    setTimeout(refreshUpdatesBadge, 4000);
+
+    function openUpdatesModal() {
+      document.getElementById('updatesModal').style.display = 'flex';
+      if (_updatesData) renderUpdates(_updatesData);
+      else { document.getElementById('updatesList').innerHTML = '<div style="color:#888;">Loading…</div>'; refreshUpdatesBadge(); }
+    }
+    function closeUpdatesModal() { document.getElementById('updatesModal').style.display = 'none'; }
+
+    function checkUpdatesNow() {
+      const list = document.getElementById('updatesList');
+      list.innerHTML = '<div style="color:#888;">Checking GitHub for the latest versions…</div>';
+      fetch('/api/firmware/check', { method: 'POST' }).then(r => r.json()).then(res => {
+        if (res.ok && res.status) { _updatesData = Object.assign(_updatesData || {}, res.status); renderUpdates(_updatesData); refreshUpdatesBadge(); }
+        else { list.innerHTML = '<div style="color:#e53935;">Check failed: ' + (res.error || 'unknown') + '</div>'; }
+      }).catch(e => { list.innerHTML = '<div style="color:#e53935;">Error: ' + e + '</div>'; });
+    }
+
+    function _updateRow(title, icon, cur, latest, available, url, extra) {
+      const color = available ? '#ffb300' : '#4caf50';
+      const status = available
+        ? `<span style="color:#ffb300;font-weight:bold;">Update available → ${latest || '?'}</span>`
+        : (latest ? `<span style="color:#4caf50;">Up to date</span>` : `<span style="color:#888;">Unknown</span>`);
+      let html = `<div style="border-left:4px solid ${color};background:#161616;border-radius:6px;padding:10px 12px;margin-bottom:10px;">`;
+      html += `<div style="font-weight:bold;font-size:1.05em;">${icon} ${title}</div>`;
+      html += `<div style="color:#ccc;margin:4px 0;">Installed: <code>${cur || 'unknown'}</code> &nbsp; ${status}</div>`;
+      if (extra) html += `<div style="color:#aaa;font-size:0.85em;">${extra}</div>`;
+      if (available && url) html += `<a href="${url}" target="_blank" style="color:#4fc3f7;">View release ↗</a>`;
+      html += `</div>`;
+      return html;
+    }
+
+    function renderUpdates(d) {
+      const list = document.getElementById('updatesList');
+      const at = document.getElementById('updatesCheckedAt');
+      if (at) at.textContent = d.checked_at ? ('Last checked: ' + d.checked_at) : '';
+      const chans = d.channels || {};
+      let html = '';
+      const a = d.mesh_api || {};
+      html += _updateRow('MESH-API', '🛰️', a.current, a.latest, a.update_available, a.url,
+        a.update_available ? 'A newer MESH-API release is available. <code>git pull</code> or download from GitHub.' : '');
+      const mt = d.meshtastic || {};
+      const mtDev = (mt.device && (mt.device.hw_model || mt.device.pio_env)) ? `Device: ${mt.device.hw_model || ''} (${mt.device.pio_env || '?'})` : 'No Meshtastic device detected';
+      html += _updateRow('Meshtastic firmware', '📡', mt.current, mt.latest, mt.update_available, mt.url, mtDev +
+        _channelPicker('meshtastic', chans.meshtastic || 'stable') +
+        (mt.update_available && d.allow_flashing ? ' <button class="reply-btn" onclick="flashMeshtastic()">⚡ Flash latest</button>' :
+         (mt.update_available ? ' — flashing disabled (enable firmware.allow_flashing or use the web flasher)' : '')));
+      const mc = d.meshcore || {};
+      const mcDev = (mc.device && mc.device.model) ? `Device: ${mc.device.model}` : (mc.current ? '' : 'No MeshCore device detected');
+      html += _updateRow('MeshCore firmware', '🟣', mc.current, mc.latest, mc.update_available, mc.url, (mcDev ||
+        'MeshCore firmware updates use the vendor web flasher.') + _channelPicker('meshcore', chans.meshcore || 'stable'));
+      const fl = d.flashing || {};
+      if (fl.active) html += `<div style="color:#ffb300;">⚡ Flashing in progress: ${fl.progress || ''}</div>`;
+      list.innerHTML = html;
+    }
+
+    function _channelPicker(which, current) {
+      const opt = (v, label) => `<option value="${v}"${v === current ? ' selected' : ''}>${label}</option>`;
+      return `<div style="margin-top:6px;">Release channel: ` +
+        `<select onchange="setFirmwareChannel('${which}', this.value)" style="background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:2px 6px;">` +
+        opt('stable', '🟢 Stable') + opt('beta', '🟡 Beta') + opt('alpha', '🔴 Alpha') + `</select></div>`;
+    }
+
+    function setFirmwareChannel(which, channel) {
+      const list = document.getElementById('updatesList');
+      list.innerHTML = '<div style="color:#888;">Switching ' + which + ' to ' + channel + ' channel and re-checking…</div>';
+      fetch('/api/firmware/channel', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({which: which, channel: channel}) })
+        .then(r => r.json()).then(res => {
+          if (res.ok && res.status) { _updatesData = Object.assign(_updatesData || {}, res.status); renderUpdates(_updatesData); refreshUpdatesBadge(); }
+          else { list.innerHTML = '<div style="color:#e53935;">Failed: ' + (res.error || 'unknown') + '</div>'; }
+        }).catch(e => { list.innerHTML = '<div style="color:#e53935;">Error: ' + e + '</div>'; });
+    }
+
+    function flashMeshtastic() {
+      if (!confirm('Flash the latest Meshtastic firmware to the connected ESP32 device? The radio will be OFFLINE during flashing. Do not unplug it.')) return;
+      const list = document.getElementById('updatesList');
+      list.innerHTML = '<div style="color:#ffb300;">⚡ Flashing… do not unplug the device. This can take a few minutes.</div>';
+      fetch('/api/firmware/flash', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({confirm: true}) })
+        .then(r => r.json()).then(res => {
+          if (res.ok) list.innerHTML = '<div style="color:#4caf50;">✅ Flash complete. The radio is reconnecting.</div>';
+          else if (res.web_flasher) list.innerHTML = '<div style="color:#ffb300;">' + (res.message||'') + '</div><a href="' + res.web_flasher + '" target="_blank" style="color:#4fc3f7;">Open web flasher ↗</a>';
+          else list.innerHTML = '<div style="color:#e53935;">' + (res.message || res.error || 'Flash failed') + '</div>';
+          setTimeout(refreshUpdatesBadge, 3000);
+        }).catch(e => { list.innerHTML = '<div style="color:#e53935;">Error: ' + e + '</div>'; });
+    }
+
+    // v0.7.0: when MeshCore (or Both) is the send target, offer MeshCore's own
+    // channels (group chats / private channels) in the channel dropdown.
+    let meshtasticChannelHTML = null;
+    function refreshChannelOptionsForNetwork() {
+      const sel = document.getElementById('networkSel');
+      const chan = document.getElementById('channelSel');
+      if (!chan) return;
+      if (meshtasticChannelHTML === null) meshtasticChannelHTML = chan.innerHTML; // snapshot MT channels
+      const net = sel ? sel.value : 'auto';
+      if (net === 'meshcore') {
+        fetch('/api/meshcore/channels').then(r => r.json()).then(chs => {
+          if (!Array.isArray(chs) || !chs.length) return;
+          const cur = chan.value;
+          chan.innerHTML = chs.map(c => `<option value="${c.index}">${c.index} - ${c.name}</option>`).join('');
+          if ([...chan.options].some(o => o.value === cur)) chan.value = cur;
+        }).catch(() => {});
+      } else {
+        // Meshtastic / Both / Auto -> show Meshtastic channels (the bridge maps them)
+        if (chan.innerHTML !== meshtasticChannelHTML) chan.innerHTML = meshtasticChannelHTML;
+      }
+    }
+    (function(){
+      const sel = document.getElementById('networkSel');
+      if (sel) sel.addEventListener('change', refreshChannelOptionsForNetwork);
+    })();
 
     function onPageLoad() {
       setInterval(fetchMessagesAndNodes, 10000);
@@ -4964,6 +5637,7 @@ def dashboard():
       <button type="button" onclick="openCommandsModal()">⌘ Commands</button>
       <button type="button" onclick="openExtensionsModal()">🧩 Extensions</button>
       <button type="button" onclick="openConfigModal()">⚙️ Config</button>
+      <button type="button" id="updatesBtn" onclick="openUpdatesModal()" title="Check for Mesh-API / Meshtastic / MeshCore updates">🔄 Updates<span id="updatesBadge" style="display:none;margin-left:5px;background:#e53935;color:#fff;border-radius:10px;padding:0 7px;font-size:0.8em;font-weight:bold;"></span></button>
       <a href="/logs" target="_blank">📜 Logs</a>
     </div>
   </div>
@@ -4997,10 +5671,19 @@ def dashboard():
   <div data-section="sendForm">
   <div class="lcars-panel" id="sendForm">
     <div class="panel-header">
-      <h2><span class="drag-handle" title="Drag to reorder">&#x2630;</span> ✉️ Send a Message</h2>
+      <h2><span class="drag-handle" title="Drag to reorder">&#x2630;</span> ✉️ Send a Message <span id="networksBadge" style="display:none; font-size:12px; margin-left:8px; padding:2px 8px; border:1px solid var(--theme-color); border-radius:10px; vertical-align:middle;"></span></h2>
       <button class="section-hide-btn" onclick="hideSection('sendForm')" title="Hide this section">✕</button>
     </div>
     <form method="POST" action="/ui_send">
+  <div id="networkField" style="display:none;">
+    <label>Network:</label>
+    <select id="networkSel" name="network">
+      <option value="auto">Auto (active radios)</option>
+      <option value="meshtastic">Meshtastic</option>
+      <option value="meshcore">MeshCore</option>
+      <option value="both">Both networks</option>
+    </select><br><br>
+  </div>
   <label>Message Mode:</label>
       <label class="switch">
         <input type="checkbox" id="modeSwitch">
@@ -5069,6 +5752,12 @@ def dashboard():
         <div class="panel-body">
           <input type="text" id="nodeSearch" placeholder="Search nodes by name, id, or long name...">
           <div class="nodeSortBar">
+            <label for="nodeNetFilter">Network:</label>
+            <select id="nodeNetFilter">
+              <option value="all">All Networks</option>
+              <option value="meshtastic">📡 Meshtastic</option>
+              <option value="meshcore">🟣 MeshCore</option>
+            </select>
             <label for="nodeSortKey">Sort by:</label>
             <select id="nodeSortKey">
               <option value="name">Name</option>
@@ -5102,7 +5791,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.6.0\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.0 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -5117,6 +5806,25 @@ def dashboard():
           <tbody id="commandsTableBody"></tbody>
         </table>
         <div style="margin-top:8px;color:#ccc;">Most built-ins require your unique dashed suffix. Exceptions: /emergency, /911, /ping, /test.</div>
+      </div>
+    </div>
+  </div>
+  <div id="updatesModal" class="modal-overlay" onclick="if(event.target===this) closeUpdatesModal()">
+    <div class="modal-content" style="max-width:720px;">
+      <div class="modal-header">
+        <h3>🔄 Software &amp; Firmware Updates</h3>
+        <button class="modal-close" onclick="closeUpdatesModal()">Close</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom:10px;">
+          <button class="reply-btn" onclick="checkUpdatesNow()">🔍 Check Now</button>
+          <span id="updatesCheckedAt" style="color:#888;font-size:0.85em;margin-left:8px;"></span>
+        </div>
+        <div id="updatesList"></div>
+        <div style="background:#1a1a1a;border:1px solid #555;padding:10px;border-radius:8px;margin-top:12px;color:#ccc;font-size:0.85em;">
+          <strong>⚠️ Firmware flashing</strong> is disabled unless <code>firmware.allow_flashing</code> is enabled in config. ESP32 Meshtastic devices can be flashed over USB serial; nRF52/UF2 and MeshCore devices use the
+          <a href="https://flasher.meshtastic.org/" target="_blank" style="color:#4fc3f7;">web flasher</a>. Always keep a backup radio. Flashing puts the radio offline temporarily.
+        </div>
       </div>
     </div>
   </div>
@@ -5582,7 +6290,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.6.0</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.0 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>
@@ -5640,6 +6348,7 @@ def commands_page():
 @app.route("/ui_send", methods=["POST"])
 def ui_send():
     message = request.form.get("message", "").strip()
+    network = request.form.get("network", DEFAULT_SEND_NETWORK)
     mode = "direct" if request.form.get("destination_node", "") != "" else "broadcast"
     if mode == "direct":
         dest_node = request.form.get("destination_node", "").strip()
@@ -5654,13 +6363,17 @@ def ui_send():
     try:
         if mode == "direct" and dest_node:
             dest_info = f"{get_node_shortname(dest_node)} ({dest_node})"
-            log_message("WebUI", f"{message} [to: {dest_info}]", direct=True)
+            net_tag = "meshcore" if dest_node.startswith("!mc-") else "meshtastic"
+            log_message("WebUI", f"{message} [to: {dest_info}]", direct=True, network=net_tag)
             info_print(f"[UI] Direct message to node {dest_info} => '{message}'")
-            send_direct_chunks(interface, message, dest_node)
+            web_send(message, network, "direct", dest_node=dest_node)
         else:
-            log_message("WebUI", f"{message} [to: Broadcast Channel {channel_idx}]", direct=False, channel_idx=channel_idx)
-            info_print(f"[UI] Broadcast on channel {channel_idx} => '{message}'")
-            send_broadcast_chunks(interface, message, channel_idx)
+            sent_nets = resolve_send_networks(network)
+            log_message("WebUI", f"{message} [to: Broadcast Channel {channel_idx} via {'+'.join(sent_nets)}]",
+                        direct=False, channel_idx=channel_idx,
+                        network=(sent_nets[0] if len(sent_nets) == 1 else "both"))
+            info_print(f"[UI] Broadcast on channel {channel_idx} via {sent_nets} => '{message}'")
+            web_send(message, network, "broadcast", channel_idx=channel_idx)
     except Exception as e:
         print(f"⚠️ /ui_send error: {e}")
     return redirect(url_for("dashboard"))
@@ -5673,6 +6386,7 @@ def send_message():
         return jsonify({"status": "error", "message": "No JSON payload"}), 400
     message = data.get("message")
     node_id = data.get("node_id")
+    network = data.get("network", DEFAULT_SEND_NETWORK)
     # Accept both legacy "channel_index" and newer "channel" keys
     if "channel_index" in data:
         channel_idx = data.get("channel_index")
@@ -5688,9 +6402,10 @@ def send_message():
         if direct:
             if node_id is None:
                 return jsonify({"status": "error", "message": "Missing 'node_id' for direct send"}), 400
-            log_message("WebUI", f"{message} [to: {get_node_shortname(node_id)} ({node_id})]", direct=True)
+            net_tag = "meshcore" if (isinstance(node_id, str) and node_id.startswith("!mc-")) else "meshtastic"
+            log_message("WebUI", f"{message} [to: {get_node_shortname(node_id)} ({node_id})]", direct=True, network=net_tag)
             info_print(f"[Info] Direct send to node {node_id} => '{message}'")
-            send_direct_chunks(interface, message, node_id)
+            web_send(message, network, "direct", dest_node=node_id)
             return jsonify({"status": "sent", "to": node_id, "direct": True, "message": message})
         else:
             # channel_idx may come as string; ensure int and default to 0 if invalid
@@ -5698,10 +6413,12 @@ def send_message():
                 channel_idx = int(channel_idx)
             except (TypeError, ValueError):
                 channel_idx = 0
-            log_message("WebUI", f"{message} [to: Broadcast Channel {channel_idx}]", direct=False, channel_idx=channel_idx)
-            info_print(f"[Info] Broadcast on ch={channel_idx} => '{message}'")
-            send_broadcast_chunks(interface, message, channel_idx)
-            return jsonify({"status": "sent", "to": f"channel {channel_idx}", "message": message})
+            sent_nets = resolve_send_networks(network)
+            log_message("WebUI", f"{message} [to: Broadcast Channel {channel_idx}]", direct=False, channel_idx=channel_idx,
+                        network=(sent_nets[0] if len(sent_nets) == 1 else "both"))
+            info_print(f"[Info] Broadcast on ch={channel_idx} via {sent_nets} => '{message}'")
+            web_send(message, network, "broadcast", channel_idx=channel_idx)
+            return jsonify({"status": "sent", "to": f"channel {channel_idx}", "networks": sent_nets, "message": message})
     except Exception as e:
         print(f"⚠️ Failed to send: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -5788,6 +6505,32 @@ def connect_interface():
         add_script_log(f"Connection error: {exc}")
         raise
 
+def connect_interface_with_timeout(timeout=30):
+    """Run connect_interface() but never block longer than `timeout` seconds.
+
+    Fixes the issue where an unreachable Wi-Fi/TCP node (e.g. after a DHCP IP
+    change) left MESH-API hanging indefinitely inside the blocking connect (#58).
+    """
+    result = {}
+
+    def _worker():
+        try:
+            result["iface"] = connect_interface()
+        except Exception as exc:  # noqa: BLE001 - re-raised on the calling thread
+            result["error"] = exc
+
+    th = threading.Thread(target=_worker, name="mt-connect", daemon=True)
+    th.start()
+    th.join(timeout)
+    if th.is_alive():
+        global connection_status, last_error_message
+        connection_status = "Disconnected"
+        last_error_message = f"Connect timed out after {timeout}s"
+        raise TimeoutError(last_error_message)
+    if "error" in result:
+        raise result["error"]
+    return result.get("iface")
+
 def thread_excepthook(args):
     logging.error(f"Meshtastic thread error: {args.exc_value}")
     traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
@@ -5797,8 +6540,37 @@ def thread_excepthook(args):
 
 threading.excepthook = thread_excepthook
 
+def _mark_meshcore_started():
+    _meshcore_started.set()
+
+
+def _ensure_meshcore_started(delay_sec=0):
+    """Start the MeshCore radio exactly once (staged startup).
+
+    Called after Meshtastic connects so MeshCore's polling doesn't contend with
+    Meshtastic's heavy startup handshake on a shared/power-limited USB bus.
+    """
+    if meshcore_manager is None:
+        return
+    if _meshcore_started.is_set():
+        return
+    _mark_meshcore_started()
+
+    def _starter():
+        if delay_sec:
+            time.sleep(delay_sec)
+        try:
+            meshcore_manager.start()
+            print("MeshCore radio: started" + ("" if meshcore_manager.available
+                  else " (but 'meshcore' package missing — run: pip install meshcore)"))
+        except Exception as exc:
+            print(f"⚠️ MeshCore radio failed to start: {exc}")
+
+    threading.Thread(target=_starter, name="meshcore-staged-start", daemon=True).start()
+
+
 def main():
-    global interface, restart_count, server_start_time, reset_event, STARTUP_INFO_PRINTED
+    global interface, restart_count, server_start_time, reset_event, STARTUP_INFO_PRINTED, connection_status
     server_start_time = server_start_time or datetime.now(timezone.utc)
     restart_count += 1
     add_script_log(f"Server restarted. Restart count: {restart_count}")
@@ -5834,7 +6606,33 @@ def main():
     # -----------------------------
     # Extension System Startup
     # -----------------------------
-    global extension_loader
+    global extension_loader, meshcore_manager
+    # v0.7.0: bring up the core-owned MeshCore radio (first-class, not a plugin).
+    # On power-constrained hosts (e.g. a Pi Zero with two CP210x radios sharing
+    # one USB bus), starting MeshCore's polling *before* Meshtastic finishes its
+    # heavy config-download handshake causes USB contention that breaks the
+    # Meshtastic connect. So when both radios are enabled we only construct the
+    # manager here and defer .start() until Meshtastic is connected (staged
+    # startup, see _ensure_meshcore_started()). In MeshCore-only/standalone mode
+    # we start it immediately.
+    if meshcore_manager is None and (MESHCORE_ENABLED or MESHCORE_CONFIG.get("enabled")):
+        try:
+            from meshcore_core import MeshCoreManager
+            meshcore_manager = MeshCoreManager(
+                MESHCORE_CONFIG,
+                on_inbound=handle_meshcore_inbound,
+                log=add_script_log,
+            )
+            if not MESHTASTIC_ENABLED:
+                meshcore_manager.start()
+                _mark_meshcore_started()
+                print("MeshCore radio: enabled" + ("" if meshcore_manager.available
+                      else " (but 'meshcore' package missing — run: pip install meshcore)"))
+            else:
+                print("MeshCore radio: enabled (staged — will start after Meshtastic connects)")
+        except Exception as e:
+            print(f"⚠️ MeshCore radio failed to initialise: {e}")
+            meshcore_manager = None
     app_context = None
     try:
         from extensions.loader import ExtensionLoader
@@ -5861,12 +6659,144 @@ def main():
             "AI_NODE_NAME": AI_NODE_NAME,
             "AI_PREFIX_TAG": AI_PREFIX_TAG,
             "server_start_time": server_start_time,
+            # --- v0.7.0 multi-radio surface for extensions ---
+            "meshcore_manager": meshcore_manager,
+            "meshtastic_enabled": MESHTASTIC_ENABLED,
+            "meshcore_enabled": MESHCORE_ENABLED,
+            "dispatch_response": dispatch_response,
+            "web_send": web_send,
+            "resolve_send_networks": resolve_send_networks,
+            "route_and_respond": route_and_respond,
+            "notify_extensions_inbound": notify_extensions_inbound,
         }
         extension_loader = ExtensionLoader(EXTENSIONS_PATH, app_context)
         extension_loader.load_all()
     except Exception as e:
         print(f"⚠️ Extension system failed to initialise: {e}")
         extension_loader = None
+
+    # -----------------------------
+    # v0.7.0: MCP server startup (exposes core + extensions as tools)
+    # -----------------------------
+    global mcp_server
+    if mcp_server is None and MCP_ENABLED:
+        try:
+            from mcp_server import MCPServer
+
+            def _mcp_get_nodes():
+                out = []
+                if interface and hasattr(interface, "nodes"):
+                    for nid in interface.nodes:
+                        out.append({
+                            "id": nid,
+                            "shortName": get_node_shortname(nid),
+                            "longName": get_node_fullname(nid),
+                            "network": "meshtastic",
+                        })
+                if meshcore_manager is not None:
+                    try:
+                        out.extend(meshcore_manager.get_nodes())
+                    except Exception:
+                        pass
+                return out
+
+            def _mcp_get_networks():
+                mc = meshcore_manager.get_status() if meshcore_manager is not None else {
+                    "available": False, "enabled": MESHCORE_ENABLED, "connected": False}
+                return {
+                    "meshtastic": {"enabled": MESHTASTIC_ENABLED,
+                                    "connected": connection_status == "Connected",
+                                    "status": connection_status},
+                    "meshcore": mc,
+                }
+
+            def _mcp_meshtastic_channels():
+                names = config.get("channel_names", {})
+                return names if names else {}
+
+            def _mcp_send_emergency(message):
+                send_emergency_notification("MCP", message, None, None, None)
+
+            mcp_providers = {
+                "get_nodes": _mcp_get_nodes,
+                "get_messages": lambda: list(messages),
+                "get_networks": _mcp_get_networks,
+                "get_meshtastic_channels": _mcp_meshtastic_channels,
+                "get_meshcore_channels": (meshcore_manager.get_channels if meshcore_manager else None),
+                "get_meshcore_contacts": (meshcore_manager.get_contacts if meshcore_manager else None),
+                "get_commands": lambda: [{"command": c, "description": d} for c, d in get_available_commands_list()],
+                "get_extension_loader": lambda: extension_loader,
+                "send_emergency": _mcp_send_emergency,
+            }
+
+            def _mcp_save_config():
+                _atomic_write_json(CONFIG_FILE, config)
+
+            mcp_server = MCPServer(MCP_CONFIG, app_context, mcp_providers,
+                                   log=add_script_log, save_config=_mcp_save_config)
+            info = mcp_server.info()
+            print(f"MCP server: enabled at POST /mcp ({info['tool_count']} tools, "
+                  f"auth={'on' if info['require_auth'] else 'off'})")
+        except Exception as e:
+            print(f"⚠️ MCP server failed to initialise: {e}")
+            mcp_server = None
+    elif not MCP_ENABLED:
+        print("MCP server: disabled (set mcp.enabled=true to allow external AI agents).")
+
+    # -----------------------------
+    # v0.7.0: firmware / software update manager
+    # -----------------------------
+    global firmware_updater
+    if firmware_updater is None:
+        try:
+            from firmware_updater import FirmwareUpdater
+
+            def _fw_meshtastic_device_info():
+                info = {}
+                try:
+                    if interface is not None:
+                        meta = getattr(interface, "metadata", None)
+                        if meta is not None:
+                            info["firmware_version"] = getattr(meta, "firmware_version", None) or getattr(meta, "firmwareVersion", None)
+                            hw = getattr(meta, "hw_model", None) or getattr(meta, "hwModel", None)
+                            info["hw_model"] = str(hw) if hw is not None else None
+                        my = getattr(interface, "myInfo", None)
+                        if my is not None:
+                            info["pio_env"] = getattr(my, "pio_env", None) or getattr(my, "pioEnv", None)
+                        info["port"] = SERIAL_PORT or None
+                except Exception as _e:
+                    dprint(f"fw mt device info error: {_e}")
+                return info
+
+            def _fw_stop_interface():
+                try:
+                    if interface:
+                        interface.close()
+                except Exception:
+                    pass
+
+            def _fw_start_interface():
+                reset_event.set()  # main loop reconnects
+
+            def _fw_save_config():
+                _atomic_write_json(CONFIG_FILE, config)
+
+            fw_providers = {
+                "get_meshtastic_device_info": _fw_meshtastic_device_info,
+                "get_meshcore_device_info": (meshcore_manager.get_device_info if meshcore_manager else None),
+                "meshtastic_serial_port": SERIAL_PORT or None,
+                "stop_interface": _fw_stop_interface,
+                "start_interface": _fw_start_interface,
+                "save_config": _fw_save_config,
+            }
+            firmware_updater = FirmwareUpdater(FIRMWARE_CONFIG, fw_providers, log=add_script_log)
+            firmware_updater.start()
+            print("Firmware updater: enabled (checks Mesh-API / Meshtastic / MeshCore versions)"
+                  + ("" if not firmware_updater.allow_flashing else "; flashing ALLOWED"))
+        except Exception as e:
+            print(f"⚠️ Firmware updater failed to initialise: {e}")
+            firmware_updater = None
+
     print("Launching Flask in the background on port 5000...")
     api_thread = threading.Thread(
         target=app.run,
@@ -5877,6 +6807,22 @@ def main():
     # If Discord polling is configured, start that thread.
     if DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID:
         threading.Thread(target=poll_discord_channel, daemon=True).start()
+    # v0.7.0: actually start the connection watchdog (previously defined but never
+    # launched). Helps recover from silently dead Meshtastic links (#58).
+    threading.Thread(target=connection_monitor, kwargs={"initial_delay": 20}, daemon=True).start()
+
+    # v0.7.0: MeshCore-only / standalone mode — no Meshtastic device required.
+    if not MESHTASTIC_ENABLED:
+        print("Meshtastic is disabled (meshtastic_enabled=false). Running standalone (MeshCore-only).")
+        add_script_log("Running standalone: Meshtastic disabled, MeshCore is primary.")
+        while True:
+            if meshcore_manager is not None:
+                connection_status = "Connected" if meshcore_manager.is_connected else "Disconnected"
+            else:
+                connection_status = "Disconnected"
+            time.sleep(2)
+
+    mt_backoff = 5  # exponential-backoff base for Meshtastic reconnects
     while True:
         try:
             print("---------------------------------------------------")
@@ -5890,7 +6836,7 @@ def main():
                     interface.close()
             except Exception:
                 pass
-            interface = connect_interface()
+            interface = connect_interface_with_timeout(MESHTASTIC_CONNECT_TIMEOUT)
             # Update app_context so extensions always see the current interface
             if app_context is not None:
                 app_context["interface"] = interface
@@ -5903,6 +6849,11 @@ def main():
                     print("Home Assistant secure PIN protection is ENABLED.")
             print("Connection successful. Running until error or Ctrl+C.")
             add_script_log("Connection established successfully.")
+            mt_backoff = 5  # reset reconnect backoff after a good connection
+            # Staged MeshCore startup: now that Meshtastic's heavy handshake is
+            # done, bring up MeshCore after a short settle delay so the two
+            # radios don't fight over a shared/power-limited USB bus.
+            _ensure_meshcore_started(delay_sec=int(MESHCORE_CONFIG.get("startup_delay_sec", 8)))
             # Inner loop: periodically check if a reset has been signaled
             while not reset_event.is_set():
                 time.sleep(1)
@@ -5912,28 +6863,31 @@ def main():
             add_script_log("Server shutdown via KeyboardInterrupt.")
             break
         except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError) as e:
-            print(f"⚠️ Connection error: {e}. Attempting to reconnect...")
+            print(f"⚠️ Connection error: {e}. Reconnecting in {mt_backoff}s...")
             add_script_log(f"Connection error: {e}")
-            time.sleep(5)
+            time.sleep(mt_backoff)
+            mt_backoff = min(60, mt_backoff * 2)
             reset_event.clear()
             continue
         except OSError as e:
             error_code = getattr(e, 'errno', None) or getattr(e, 'winerror', None)
             if error_code in (10053, 10054, 10060):
-                print("⚠️ Connection was forcibly closed. Attempting to reconnect...")
+                print(f"⚠️ Connection was forcibly closed. Reconnecting in {mt_backoff}s...")
                 add_script_log(f"Connection forcibly closed: {e} (error code: {error_code})")
-                time.sleep(5)
+                time.sleep(mt_backoff)
+                mt_backoff = min(60, mt_backoff * 2)
                 reset_event.clear()
                 continue
         except Exception as e:
             logging.error(f"⚠️ Connection/runtime error: {e}")
             add_script_log(f"Error: {e}")
-            print("Will attempt reconnect in 30 seconds...")
+            print(f"Will attempt reconnect in {mt_backoff} seconds...")
             try:
                 interface.close()
             except Exception:
                 pass
-            time.sleep(30)
+            time.sleep(mt_backoff)
+            mt_backoff = min(60, mt_backoff * 2)
             reset_event.clear()
             continue
 
@@ -5941,7 +6895,9 @@ def connection_monitor(initial_delay=30):
     global connection_status
     time.sleep(initial_delay)
     while True:
-        if connection_status == "Disconnected":
+        # Only drive Meshtastic reconnects; in MeshCore-only mode the MeshCore
+        # manager handles its own reconnection.
+        if MESHTASTIC_ENABLED and connection_status == "Disconnected":
             print("⚠️ Connection lost! Triggering reconnect...")
             reset_event.set()
         time.sleep(5)

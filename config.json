@@ -18,6 +18,63 @@
   "serial_port": "/dev/ttyUSB0",
   "serial_baud": 460800,
 
+  "_comment_networks_v070": "v0.7.0: MeshCore is now a first-class radio. Run Meshtastic only, MeshCore only (standalone), or both. Set meshtastic_enabled=false to run a MeshCore-only node with no Meshtastic device.",
+  "meshtastic_enabled": true,
+  "default_send_network": "auto",
+
+  "meshcore": {
+    "enabled": false,
+    "_comment_connection": "Connection to the MeshCore companion node. connection_type: 'serial', 'tcp', or 'ble'.",
+    "connection_type": "serial",
+    "serial_port": "/dev/ttyUSB1",
+    "serial_baud": 115200,
+    "tcp_host": "192.168.1.100",
+    "tcp_port": 5000,
+    "ble_address": "",
+    "ble_pin": "",
+
+    "_comment_reconnect": "Bounded connect + exponential-backoff reconnect with a health-checked link watchdog.",
+    "auto_reconnect": true,
+    "max_reconnect_attempts": 0,
+    "connect_timeout_sec": 20,
+    "reconnect_interval_sec": 15,
+    "max_reconnect_interval_sec": 120,
+
+    "_comment_chunking": "Outbound message chunking for MeshCore.",
+    "max_message_length": 200,
+    "max_chunks": 5,
+    "chunk_delay_sec": 2,
+
+    "_comment_bridge": "When both radios are present, mirror traffic between networks. Maps are channel index -> channel index.",
+    "bridge_enabled": true,
+    "bridge_direct_messages": false,
+    "bridge_meshcore_channel_to_meshtastic_channel": { "0": 0 },
+    "bridge_meshtastic_channel_to_meshcore_channel": { "0": 0 },
+    "meshcore_to_meshtastic_tag": "[MC]",
+    "meshtastic_to_meshcore_tag": "[MT]"
+  },
+
+  "_comment_mcp_v070": "v0.7.0: MCP (Model Context Protocol) server. Lets external AI agents (Claude, Perplexity, Hermes, custom) call MESH-API core functions and extensions as tools over the mesh. Endpoint: POST /mcp. Disabled by default. When enabled with require_auth, an auth_token is auto-generated and printed at startup (also usable as X-API-Key). allow_emergency gates the emergency tool.",
+  "mcp": {
+    "enabled": false,
+    "require_auth": true,
+    "auth_token": "",
+    "allowed_origins": ["*"],
+    "allow_emergency": false,
+    "rate_limit_per_min": 120
+  },
+
+  "_comment_firmware_v070": "v0.7.0: firmware & software update manager. Detects the connected Meshtastic/MeshCore device, checks GitHub for newer Meshtastic firmware, MeshCore firmware, and MESH-API itself, and shows a WebUI notification. allow_flashing (default false) gates actual flashing; auto_update (default false) flashes ESP32 Meshtastic devices unattended when an update is found. nRF52/UF2 + MeshCore fall back to guided web-flasher instructions.",
+  "firmware": {
+    "auto_check": true,
+    "check_interval_sec": 86400,
+    "allow_flashing": false,
+    "auto_update": false,
+    "meshtastic_fw_repo": "meshtastic/firmware",
+    "meshcore_fw_repo": "meshcore-dev/MeshCore",
+    "mesh_api_repo": "mr-tbot/mesh-api"
+  },
+
   "ai_command": "",
   "ai_provider": "lmstudio, openai, ollama, claude, gemini, grok, openrouter, groq, deepseek, mistral, or openai_compatible",
   "system_prompt": "You are a helpful assistant responding to mesh network chats. Respond in as few words as possible while still answering fully.",
@@ -65,6 +122,12 @@
   "mistral_api_key": "",
   "mistral_model": "mistral-small-latest",
   "mistral_timeout": 60,
+
+  "_comment_hermes": "Nous Research Hermes models via their OpenAI-compatible inference API. Set ai_provider to 'hermes' to use.",
+  "hermes_api_key": "",
+  "hermes_url": "https://inference-api.nousresearch.com/v1/chat/completions",
+  "hermes_model": "Hermes-4-405B",
+  "hermes_timeout": 60,
 
   "openai_compatible_api_key": "",
   "openai_compatible_url": "",

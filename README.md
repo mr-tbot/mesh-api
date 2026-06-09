@@ -1,4 +1,21 @@
-# MESH-API v0.6.0 - Full Release!
+# MESH-API v0.7.0 Beta — Initial Full MeshCore Support Is Here!
+
+> ## 🎉 v0.7.0 Beta — Initial Full MeshCore Support
+>
+> **You can now run MESH-API with EITHER a Meshtastic node, a MeshCore node — or BOTH at the same time, with MESH-API handling cross-network routing between them.** MeshCore is no longer a half-baked bridge plugin; it is a **first-class, core-owned radio** on equal footing with Meshtastic. Slash commands, the AI assistant, and *every* extension now work across both networks, and the WebUI adapts to whichever radios you have connected.
+>
+> **⚠️ These features are widely untested and I am actively seeking community feedback on how to improve the implementation.** If you run a Meshtastic-only, MeshCore-only, or dual-radio setup, please tell me what works, what breaks, and what you'd like to see — open a [GitHub Issue](https://github.com/mr-tbot/mesh-api/issues) or start a discussion. Your real-world reports directly shape the MeshCore implementation going forward.
+>
+> Also new in v0.7.0: a built-in **MCP (Model Context Protocol) server** that turns MESH-API into an agentic backend for AI tools, and a **firmware/software update system** that detects your device and notifies you when a newer Meshtastic, MeshCore, or MESH-API version is available. See the dedicated sections below.
+
+- **v0.7.0 Beta** — 🚀 **Multi-radio overhaul + MCP tool server + firmware updates.**
+  - **MeshCore is a first-class radio.** Run Meshtastic-only, MeshCore-only (fully standalone — no Meshtastic device required), or both with MESH-API as the man-in-the-middle. MeshCore connects over serial / TCP / BLE.
+  - **Cross-network routing & UI parity** — per-network connection banner, a node **network filter** with collapsible Meshtastic/MeshCore sections, network badges on nodes and messages, distinct map markers, MeshCore channels (group chats / private channels) in the send form, and DMs to MeshCore contacts — mirroring the Meshtastic experience.
+  - **MCP (Model Context Protocol) server** — external AI agents (Claude, Perplexity, Hermes, custom) can call MESH-API core functions **and** extensions as tools, driving the mesh networks as an agentic backend. `POST /mcp` (Streamable HTTP / JSON-RPC 2.0), disabled by default, bearer-token auth. See **[MCP Server](#mcp-server-model-context-protocol)** below.
+  - **Firmware & software updates** — detects the connected Meshtastic/MeshCore device, checks GitHub for newer Meshtastic firmware, MeshCore firmware, and MESH-API itself, and shows a 🔄 **Updates** notification with **stable / beta / alpha release-channel** selection per firmware. Optional one-click ESP32 flashing (off by default). See **[Firmware Updates](#firmware--software-updates)**.
+  - **Bug fixes:** **#59** (MeshCore-origin messages now reach plugins like Telegram and the AI) and **#58** (bounded Meshtastic (re)connect + an actually-running connection watchdog).
+  - New config blocks in [config.json](config.json): `meshtastic_enabled`, `default_send_network`, `meshcore`, `mcp`, and `firmware`.
+  - MeshCore requires the `meshcore` Python package (already in [requirements.txt](requirements.txt)): `pip install meshcore`. ESP32 firmware flashing additionally needs `esptool`.
 
 - **v0.6.0** — Full release! Plugin-based extensions system with 30 built-in extensions, 12 AI providers, drop-in plugin architecture, interactive node map, collapsible channel views, draggable dashboard layout, and a fully revamped WebUI. **Docker images now available** for x86_64 and ARM64 (Raspberry Pi 4/5)!
 
@@ -396,6 +413,184 @@ See the full config reference in the [MeshCore Extension](#meshcore) section bel
 <img width="2545" height="1272" alt="MESH-API-v0 6 0-FINAL" src="https://github.com/user-attachments/assets/49a26e2c-c5fc-4e84-aee9-531d9d38e2bc" />
 
 The latest v0.6.0 Web-UI revamp!  NEW MAPS FEATURES AND TONS OF NEW GOODIES!
+
+---
+
+## Running With Meshtastic, MeshCore, or Both (v0.7.0)
+
+MESH-API v0.7.0 treats **MeshCore as a first-class radio** managed by the core
+(`meshcore_core.py`), feeding inbound messages through the *same* network-agnostic
+pipeline as Meshtastic. You can run any of three topologies:
+
+| Topology | How |
+|----------|-----|
+| **Meshtastic only** (classic) | Leave `meshcore.enabled: false`. Nothing changes. |
+| **MeshCore only** (standalone) | Set `meshtastic_enabled: false` and `meshcore.enabled: true`. No Meshtastic device required. |
+| **Both** (cross-network router) | `meshtastic_enabled: true` + `meshcore.enabled: true`. MESH-API bridges traffic between the two networks. |
+
+Configure MeshCore in the `meshcore` block of [config.json](config.json):
+
+```jsonc
+"meshtastic_enabled": true,            // set false to run MeshCore-only
+"default_send_network": "auto",        // auto | meshtastic | meshcore | both
+"meshcore": {
+  "enabled": true,
+  "connection_type": "serial",         // serial | tcp | ble
+  "serial_port": "/dev/ttyUSB1",       // or tcp_host/tcp_port, or ble_address
+  "serial_baud": 115200,
+  "bridge_enabled": true,              // mirror chat between networks when both present
+  "bridge_meshcore_channel_to_meshtastic_channel": { "0": 0 },
+  "bridge_meshtastic_channel_to_meshcore_channel": { "0": 0 }
+}
+```
+
+**What works across both networks:** slash commands, the AI assistant, every
+extension/plugin, the harmonized node map, DMs, channel/group messaging, and
+emergency broadcasts. The WebUI adapts automatically — a per-network connection
+banner, a node **network filter** with collapsible Meshtastic/MeshCore sections,
+network badges (📡 MT / 🟣 MC) on nodes and messages, distinct map markers, and a
+**Network** selector in the send form (Auto / Meshtastic / MeshCore / Both) that
+appears when both radios are present.
+
+> ⚠️ MeshCore support is brand new and widely untested — please report your
+> experience (any topology) on [GitHub](https://github.com/mr-tbot/mesh-api/issues).
+
+---
+
+## MCP Server (Model Context Protocol)
+
+v0.7.0 ships a built-in **MCP server** that exposes MESH-API's core functions
+**and** its extensions as callable *tools*, so external AI agents and services —
+**Claude, Perplexity, Hermes, custom agents, OpenClaw, etc.** — can drive your
+Meshtastic and/or MeshCore networks as an **agentic backend**. This enables
+advanced workflows: an agent can read the mesh, decide, and act (send messages,
+run commands, trigger extensions) over LoRa.
+
+### How it works
+
+- **Transport:** Streamable HTTP / JSON-RPC 2.0 at a single endpoint, `POST /mcp`.
+  Implemented directly in Flask (no async/uvicorn dependency — runs fine on a Pi
+  Zero). Compatible with MCP clients that speak HTTP directly, or with stdio-only
+  clients (e.g. Claude Desktop) via the [`mcp-remote`](https://github.com/geelen/mcp-remote) bridge.
+- **Disabled by default.** Enable it in the `mcp` block of [config.json](config.json):
+
+  ```jsonc
+  "mcp": {
+    "enabled": true,
+    "require_auth": true,        // bearer token (auto-generated + printed on first start)
+    "auth_token": "",            // leave blank to auto-generate; also accepted as X-API-Key
+    "allowed_origins": ["*"],    // DNS-rebinding allowlist
+    "allow_emergency": false,    // gate the emergency tool
+    "rate_limit_per_min": 120
+  }
+  ```
+
+  On first start with auth enabled, a token like `mesh-mcp-XXXX` is generated,
+  saved to config, and printed to the log. Pass it as `Authorization: Bearer <token>`.
+
+### Connecting a client
+
+Point any MCP client at `http://<host>:5000/mcp` with the bearer token. For
+Claude Desktop / stdio clients:
+
+```jsonc
+{
+  "mcpServers": {
+    "mesh-api": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://<host>:5000/mcp",
+               "--header", "Authorization: Bearer mesh-mcp-YOURTOKEN"]
+    }
+  }
+}
+```
+
+### Built-in core tools
+
+| Tool | Purpose |
+|------|---------|
+| `mesh_send_message` | Send to a network (meshtastic / meshcore / both / auto), broadcast or DM |
+| `mesh_list_nodes` | List nodes across both networks (filterable) |
+| `mesh_get_messages` | Read the recent mesh chat log |
+| `mesh_network_status` | Status of both radios |
+| `mesh_list_channels` | Meshtastic + MeshCore channels |
+| `mesh_ai_query` | Ask the configured AI provider |
+| `mesh_list_commands` / `mesh_run_command` | List / run any slash command |
+| `meshcore_list_contacts` | MeshCore DM targets |
+| `mesh_send_emergency` | Emergency broadcast (gated by `allow_emergency`) |
+
+### Extensions as MCP tools
+
+**Every loaded extension's slash command is auto-exposed** as an `ext_cmd_<command>`
+tool — no work required. Extensions can additionally provide **richer, typed
+tools** by implementing two optional, duck-typed methods (no base-class change):
+
+```python
+def get_mcp_tools(self) -> list[dict]:
+    return [{
+        "name": "lookup_city",          # exposed as ext_<slug>_lookup_city
+        "description": "Look up weather for a city",
+        "inputSchema": {"type": "object",
+                        "properties": {"city": {"type": "string"}},
+                        "required": ["city"]},
+    }]
+
+def call_mcp_tool(self, name: str, arguments: dict) -> str:
+    if name == "lookup_city":
+        return self._weather_for(arguments.get("city", ""))
+    return f"Unknown tool: {name}"
+```
+
+The tool list is rebuilt on every `tools/list`, so enabling/reloading an
+extension surfaces its tools without restarting MESH-API. See
+[DEVELOPING_EXTENSIONS.md](DEVELOPING_EXTENSIONS.md#mcp-tools-v070) for details.
+
+### Security
+
+Tool calls can send mesh traffic and trigger actions, so the server validates
+inputs, requires a bearer token by default, validates the `Origin` header,
+rate-limits calls, clamps output size, and gates the emergency tool. Treat the
+token like a password. There should always be a human in the loop for sensitive
+operations.
+
+---
+
+## Firmware & Software Updates
+
+v0.7.0 adds a comprehensive, **safe-by-default** update system (`firmware_updater.py`):
+
+- **Detection** — identifies the connected Meshtastic device (hardware model +
+  firmware variant `pioEnv` + version) and the MeshCore device (model + version).
+- **Update notifications** — a 🔄 **Updates** button in the WebUI masthead shows a
+  badge when a newer **Meshtastic firmware**, **MeshCore firmware**, or **MESH-API**
+  release is available (checked against GitHub on a periodic timer + on demand).
+- **Release channels** — pick **stable / beta / alpha** independently for
+  Meshtastic and MeshCore firmware. Beta/alpha track GitHub pre-releases; the
+  WebUI shows the newest matching version for the channel you choose. (Your device
+  is not always a Heltec V3 — detection adapts to whatever is connected.)
+- **Flashing (optional, off by default)** — for ESP32-class Meshtastic devices,
+  the latest firmware can be downloaded and flashed over USB serial via `esptool`.
+  nRF52/UF2 devices and MeshCore companions fall back to guided
+  [web-flasher](https://flasher.meshtastic.org/) instructions (unattended flashing
+  there is unsafe). Enable with `firmware.allow_flashing: true`; optional
+  `firmware.auto_update: true` flashes ESP32 Meshtastic devices unattended.
+
+```jsonc
+"firmware": {
+  "auto_check": true,
+  "check_interval_sec": 86400,
+  "allow_flashing": false,          // master gate for flashing
+  "auto_update": false,             // never flashes unattended unless true
+  "meshtastic_channel": "stable",   // stable | beta | alpha
+  "meshcore_channel": "stable",
+  "meshtastic_fw_repo": "meshtastic/firmware",
+  "meshcore_fw_repo": "meshcore-dev/MeshCore",
+  "mesh_api_repo": "mr-tbot/mesh-api"
+}
+```
+
+> ⚠️ Flashing can brick a radio. Always keep a backup device, and prefer the web
+> flasher unless you understand the risks. The radio goes offline during flashing.
 
 ---
 
@@ -1840,6 +2035,36 @@ The `extensions/` directory includes 25+ working extensions you can reference:
 ---
 
 ## Changelog
+
+### v0.7.0 Beta — Initial Full MeshCore Support
+
+> Run MESH-API with a Meshtastic node, a MeshCore node, or **both** with
+> cross-network routing. Widely untested — community feedback wanted.
+
+#### Multi-radio (MeshCore as a first-class radio)
+- **MeshCore promoted to a core-owned radio** (`meshcore_core.py`) on equal footing with Meshtastic, feeding the *same* network-agnostic message pipeline. Connects over serial / TCP / BLE.
+- **Three topologies:** Meshtastic-only (unchanged), MeshCore-only standalone (`meshtastic_enabled: false`, no Meshtastic device needed), or both with MESH-API as the man-in-the-middle bridge.
+- **Cross-network everything** — slash commands, AI, and every extension now work on both networks; outbound send to one network or both at once.
+- **WebUI parity for MeshCore** — per-network connection banner; node **network filter** with **collapsible Meshtastic/MeshCore sections**; network badges (📡/🟣) on nodes & messages; distinct purple map markers with DM/interact; MeshCore channels (group chats / private channels) in the send form; DMs to MeshCore contacts.
+- **Staged startup + exponential backoff** so two USB radios on a power-limited host (e.g. Pi Zero) don't fight over the bus during connect.
+
+#### MCP server (Model Context Protocol)
+- New built-in **MCP server** (`mcp_server.py`) at `POST /mcp` (Streamable HTTP / JSON-RPC 2.0, no async deps). Lets external AI agents (Claude, Perplexity, Hermes, custom) call MESH-API core functions and extensions as **tools**, using the mesh as an agentic backend.
+- Core tools for sending, listing nodes/messages/channels, AI queries, running commands, and MeshCore contacts; **every extension slash command is auto-exposed** as `ext_cmd_*`, and extensions can add richer typed tools via `get_mcp_tools()` + `call_mcp_tool()`.
+- Disabled by default; bearer-token auth, Origin allowlist, rate limiting, gated emergency tool.
+
+#### Firmware & software updates
+- New **update manager** (`firmware_updater.py`) detects the connected Meshtastic/MeshCore device and notifies (🔄 Updates button + badge) when newer Meshtastic firmware, MeshCore firmware, or MESH-API is available.
+- **Stable / beta / alpha release channels** selectable per firmware. Optional ESP32 over-USB flashing via `esptool` (off by default); nRF52/UF2 + MeshCore use the web flasher.
+
+#### Bug fixes
+- **#59 — MeshCore-origin messages now reach plugins/AI.** Both radios funnel through one inbound pipeline, so a MeshCore message reaches Telegram, Discord, the AI provider, etc.
+- **#58 — Reconnect hangs.** Bounded Meshtastic (re)connect (no more infinite hang on a wedged Wi-Fi/TCP link) and the connection watchdog is now actually started; exponential reconnect backoff.
+- **OpenAI reasoning models** — `gpt-5`/`o1`/`o3`/`o4` now use `max_completion_tokens` with proper headroom, fixing empty AI replies.
+- **Logging cascade** — hardened `script.log` truncation against non-UTF-8 bytes that could spin into a `RecursionError`.
+
+#### New config blocks
+- `meshtastic_enabled`, `default_send_network`, and the `meshcore`, `mcp`, and `firmware` blocks in [config.json](config.json). Old configs keep working; the new keys are additive.
 
 ### v0.6.0 (Full Release)
 
