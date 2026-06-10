@@ -190,7 +190,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.2.2 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.2.3 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -533,8 +533,10 @@ app = Flask(__name__)
 messages = []
 interface = None
 # v0.7.2.2: real-time mesh traffic monitor. Each event is (epoch_seconds, network,
-# direction) where direction is "rx" or "tx". Bounded ring buffer (~last few minutes).
-traffic_events = collections.deque(maxlen=8000)
+# direction) where direction is "rx" or "tx". Bounded ring buffer (~last hour at a
+# busy mesh's packet rate). v0.7.2.3: rx now counts *all* received packets, not just
+# text messages.
+traffic_events = collections.deque(maxlen=60000)
 
 
 def record_traffic(network="meshtastic", direction="rx"):
@@ -1940,6 +1942,17 @@ def handle_meshcore_inbound(network, sender_id, sender_name, text, is_direct, ch
         print(f"⚠️ handle_meshcore_inbound error: {e}")
 
 
+def on_packet_any(packet=None, interface=None, **kwargs):
+  """Lightweight callback fired for EVERY received Meshtastic packet (not just
+  text messages) so the WebUI traffic monitor reflects all mesh radio activity
+  — position, telemetry, nodeinfo, routing, text, etc. Subscribed alongside
+  on_receive on the 'meshtastic.receive' topic."""
+  try:
+    record_traffic("meshtastic", "rx")
+  except Exception:
+    pass
+
+
 def on_receive(packet=None, interface=None, **kwargs):
   dprint(f"on_receive => packet={packet}")
   if not packet or 'decoded' not in packet:
@@ -1955,7 +1968,6 @@ def on_receive(packet=None, interface=None, **kwargs):
     raw_to = packet.get('toId', None)
     to_node_int = parse_node_id(raw_to)
     ch_idx = packet.get('channel', 0)
-    record_traffic("meshtastic", "rx")
 
     # MQTT gating: ignore MQTT-originated traffic if configured to do so
     via_mqtt = bool(packet.get('viaMqtt') or packet.get('rxViaMqtt') or packet.get('decoded', {}).get('viaMqtt'))
@@ -2089,26 +2101,37 @@ def api_networks():
 def api_traffic():
     """Real-time mesh radio traffic, bucketed for the WebUI traffic monitor.
 
-    Returns per-second rx/tx counts over a sliding window (default 60s), plus
-    rolling totals, so the dashboard can draw a green→red activity graph.
+    Returns rx/tx counts over a sliding window (user-selectable, default 60s),
+    split into a fixed number of time buckets so the graph stays readable at any
+    window length, plus rolling totals. Counts *all* received packets (every
+    Meshtastic port type), not just text messages.
     """
     try:
         window = int(request.args.get("seconds", 60))
     except (TypeError, ValueError):
         window = 60
-    window = max(10, min(window, 180))
+    # Allow 10 seconds up to 6 hours.
+    window = max(10, min(window, 21600))
+    try:
+        buckets = int(request.args.get("buckets", 120))
+    except (TypeError, ValueError):
+        buckets = 120
+    buckets = max(20, min(buckets, 300))
     now = time.time()
     start = now - window
-    rx = [0] * window
-    tx = [0] * window
+    bucket_sec = window / buckets
+    rx = [0] * buckets
+    tx = [0] * buckets
     total_rx = 0
     total_tx = 0
     for ts, _net, direction in list(traffic_events):
         if ts < start:
             continue
-        idx = int(ts - start)
-        if idx < 0 or idx >= window:
+        idx = int((ts - start) / bucket_sec)
+        if idx < 0:
             continue
+        if idx >= buckets:
+            idx = buckets - 1
         if direction == "tx":
             tx[idx] += 1
             total_tx += 1
@@ -2118,6 +2141,8 @@ def api_traffic():
     peak = max([0] + rx + tx)
     return jsonify({
         "seconds": window,
+        "buckets": buckets,
+        "bucket_sec": bucket_sec,
         "rx": rx,
         "tx": tx,
         "total_rx": total_rx,
@@ -2721,6 +2746,10 @@ def dashboard():
   /* Full width for three-col and discord */
   #sortableContainer > div[data-section="threeCol"],
   #sortableContainer > div[data-section="discordSection"] { flex: 1 1 100%; }
+  /* v0.7.2.3: Traffic Monitor is full width ("double wide") and sits above the
+     map/send row by default; still draggable/hideable like every other box. */
+  #sortableContainer > div[data-section="trafficMonitor"] { flex: 1 1 100%; }
+  #trafficMonitorPanel { margin: 20px 20px 0 20px; }
   /* Resizable panels — only on panels that handle overflow safely (not the map) */
   #sendForm { resize: horizontal; overflow: auto; }
   .three-col .lcars-panel { resize: horizontal; overflow: auto; }
@@ -3908,6 +3937,12 @@ def dashboard():
           const el = container.querySelector('[data-section="' + sectionId + '"]');
           if (el) container.appendChild(el);
         });
+        // v0.7.2.3: the Traffic Monitor defaults to the top. If the saved order
+        // predates it (i.e. the user never explicitly placed it), keep it first.
+        if (order.indexOf('trafficMonitor') === -1) {
+          const tm = container.querySelector('[data-section="trafficMonitor"]');
+          if (tm && container.firstElementChild !== tm) container.insertBefore(tm, container.firstElementChild);
+        }
       } catch (e) { console.warn('Failed to load layout:', e); }
     }
     function saveColumnOrder() {
@@ -5704,13 +5739,39 @@ def dashboard():
         }
       }
       const stats = document.getElementById('trafficStats');
-      if (stats) stats.textContent = '▾' + (d.total_rx || 0) + ' rx  ▴' + (d.total_tx || 0) + ' tx (60s)';
+      const winSec = (d.seconds || trafficWindowSeconds());
+      if (stats) stats.textContent = '▾' + (d.total_rx || 0) + ' rx  ▴' + (d.total_tx || 0) + ' tx (' + trafficWindowLabel(winSec) + ')';
+    }
+    function trafficWindowSeconds() {
+      const sel = document.getElementById('trafficWindow');
+      const v = sel ? parseInt(sel.value, 10) : 60;
+      return (v && v > 0) ? v : 60;
+    }
+    function trafficWindowLabel(sec) {
+      if (sec >= 3600) return (sec / 3600) + (sec === 3600 ? ' hour' : ' hours');
+      if (sec >= 60) return (sec / 60) + ' min';
+      return sec + 's';
+    }
+    function onTrafficWindowChange() {
+      const sel = document.getElementById('trafficWindow');
+      if (sel) localStorage.setItem('trafficWindow', sel.value);
+      const lbl = document.getElementById('trafficWindowLabel');
+      if (lbl) lbl.textContent = 'green = light · red = heavy traffic · last ' + trafficWindowLabel(trafficWindowSeconds());
+      fetchTraffic();
     }
     function fetchTraffic() {
       const sec = document.querySelector('#sortableContainer [data-section="trafficMonitor"]');
       if (sec && sec.style.display === 'none') return; // skip when hidden
-      fetch('/api/traffic?seconds=60').then(r => r.json()).then(drawTraffic).catch(() => {});
+      const win = trafficWindowSeconds();
+      fetch('/api/traffic?seconds=' + win + '&buckets=120').then(r => r.json()).then(drawTraffic).catch(() => {});
     }
+    (function initTrafficWindow() {
+      const saved = localStorage.getItem('trafficWindow');
+      const sel = document.getElementById('trafficWindow');
+      if (sel && saved) { sel.value = saved; }
+      const lbl = document.getElementById('trafficWindowLabel');
+      if (lbl) lbl.textContent = 'green = light · red = heavy traffic · last ' + trafficWindowLabel(trafficWindowSeconds());
+    })();
     setTimeout(fetchTraffic, 1000);
     setInterval(fetchTraffic, 3000);
     window.addEventListener('resize', function() { setTimeout(fetchTraffic, 150); });
@@ -6331,14 +6392,25 @@ def dashboard():
   <div class="lcars-panel" id="trafficMonitorPanel">
     <div class="panel-title-row">
       <h2><span class="drag-handle" title="Drag to reorder">&#x2630;</span> 📊 Traffic Monitor <span id="trafficStats" style="font-size:0.6em;color:#888;font-weight:normal;margin-left:8px;"></span></h2>
-      <div><button class="section-hide-btn" onclick="hideSection('trafficMonitor')" title="Hide this section">✕</button></div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <label for="trafficWindow" style="font-size:0.78em;color:#aaa;">Window:</label>
+        <select id="trafficWindow" onchange="onTrafficWindowChange()" style="background:#222;color:#fff;border:1px solid var(--theme-color);border-radius:4px;padding:2px 8px;font-size:0.85em;">
+          <option value="60">1 min</option>
+          <option value="300">5 min</option>
+          <option value="900">15 min</option>
+          <option value="1800">30 min</option>
+          <option value="3600">1 hour</option>
+          <option value="21600">6 hours</option>
+        </select>
+        <button class="section-hide-btn" onclick="hideSection('trafficMonitor')" title="Hide this section">✕</button>
+      </div>
     </div>
     <div class="panel-body" style="padding:6px 10px 10px;">
-      <canvas id="trafficCanvas" height="90" style="width:100%;height:90px;display:block;background:#0a0a0a;border-radius:6px;"></canvas>
+      <canvas id="trafficCanvas" height="140" style="width:100%;height:140px;display:block;background:#0a0a0a;border-radius:6px;"></canvas>
       <div style="display:flex;gap:14px;margin-top:6px;font-size:0.78em;color:#aaa;flex-wrap:wrap;">
-        <span><span style="display:inline-block;width:10px;height:10px;background:#1e88e5;border-radius:2px;margin-right:4px;"></span>RX (received)</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#1e88e5;border-radius:2px;margin-right:4px;"></span>RX (all packets received)</span>
         <span><span style="display:inline-block;width:10px;height:10px;background:#ffb300;border-radius:2px;margin-right:4px;"></span>TX (sent)</span>
-        <span style="margin-left:auto;color:#666;">green = light · red = heavy traffic · last 60s</span>
+        <span id="trafficWindowLabel" style="margin-left:auto;color:#666;">green = light · red = heavy traffic · last 60s</span>
       </div>
     </div>
   </div>
@@ -6491,7 +6563,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2.2 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2.3 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -7116,7 +7188,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2.2 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2.3 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>
@@ -7658,6 +7730,10 @@ def main():
             except Exception:
                 pass
             try:
+                pub.unsubscribe(on_packet_any, "meshtastic.receive")
+            except Exception:
+                pass
+            try:
                 if interface:
                     interface.close()
             except Exception:
@@ -7668,6 +7744,9 @@ def main():
                 app_context["interface"] = interface
             print("Subscribing to on_receive callback...")
             pub.subscribe(on_receive, "meshtastic.receive")
+            # v0.7.2.3: also count every received packet (all port types) for the
+            # traffic monitor, not just text messages.
+            pub.subscribe(on_packet_any, "meshtastic.receive")
             print(f"AI provider set to: {AI_PROVIDER}")
             if HOME_ASSISTANT_ENABLED:
                 print(f"Home Assistant multi-mode is ENABLED. Channel index: {HOME_ASSISTANT_CHANNEL_INDEX}")

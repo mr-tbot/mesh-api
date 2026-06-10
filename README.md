@@ -8,6 +8,8 @@
 >
 > Also new in v0.7.0: a built-in **MCP (Model Context Protocol) server** that turns MESH-API into an agentic backend for AI tools, and a **firmware/software update system** that detects your device and notifies you when a newer Meshtastic, MeshCore, or MESH-API version is available. See the dedicated sections below.
 
+- **v0.7.2.3 Beta** — 📊 **Traffic monitor upgrades.** The Traffic Monitor is now **full-width** (double-wide) and sits **above the Node Map / Send row** by default (still draggable, hideable, and reorderable like every other box). It now counts **all received packets** — position, telemetry, nodeinfo, routing, text, etc. — not just chat messages, via a dedicated all-packet radio hook. Added a **user-selectable time window** (1 min / 5 min / 15 min / 30 min / 1 hour / 6 hours), persisted per browser, with the graph re-bucketed so it stays readable at any length. `GET /api/traffic` gained `seconds` (up to 6 h) and `buckets` parameters.
+
 - **v0.7.2.2 Beta** — 📊 **Traffic monitor + 🚨 emergency alerts + Hermes is now an extension.**
   - **Real-time traffic monitor** — a new movable **📊 Traffic Monitor** box at the top of the dashboard draws live mesh radio activity as green→red bars (RX received / TX sent, last 60 s). Like every panel it can be dragged, hidden, or reordered. Backed by a new `GET /api/traffic` endpoint.
   - **Emergency alert box** — when a node triggers `/emergency` (or `/911`), a large **flashing red box** appears in the masthead (between the logo and the toolbar, below the connection status). Click it to open a modal with the alert text and node information (name, ID, GPS/map link, reply). Alerts **must be cleared by the user** and persist until then.
