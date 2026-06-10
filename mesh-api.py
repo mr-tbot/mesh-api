@@ -190,7 +190,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.2.3 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.2.4 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -543,6 +543,22 @@ def record_traffic(network="meshtastic", direction="rx"):
     """Record a single mesh radio traffic event for the WebUI traffic monitor."""
     try:
         traffic_events.append((time.time(), network, direction))
+    except Exception:
+        pass
+
+
+# v0.7.2.4: track which nodes are heard via MQTT vs direct RF. node_id -> {"mqtt": bool,
+# "ts": epoch}. A node is flagged MQTT if its most recent packet arrived with the MQTT
+# flag set. Used to badge nodes in the list and on the map.
+mqtt_nodes = {}
+
+
+def record_node_mqtt(node_id, via_mqtt):
+    """Record whether a node's latest packet arrived via MQTT (vs direct RF)."""
+    if not node_id:
+        return
+    try:
+        mqtt_nodes[str(node_id)] = {"mqtt": bool(via_mqtt), "ts": time.time()}
     except Exception:
         pass
 
@@ -1951,6 +1967,14 @@ def on_packet_any(packet=None, interface=None, **kwargs):
     record_traffic("meshtastic", "rx")
   except Exception:
     pass
+  # v0.7.2.4: record per-node MQTT vs direct-RF state from any packet type.
+  try:
+    if packet:
+      via_mqtt = bool(packet.get('viaMqtt') or packet.get('rxViaMqtt')
+                      or packet.get('decoded', {}).get('viaMqtt'))
+      record_node_mqtt(packet.get('fromId'), via_mqtt)
+  except Exception:
+    pass
 
 
 def on_receive(packet=None, interface=None, **kwargs):
@@ -2065,11 +2089,19 @@ def get_nodes_api():
         for nid in interface.nodes:
             sn = get_node_shortname(nid)
             ln = get_node_fullname(nid)
+            # v0.7.2.4: surface whether this node is heard via MQTT. Prefer a
+            # per-node hint from the device DB, else fall back to the last packet
+            # we observed for this node id.
+            node_obj = interface.nodes.get(nid, {}) if isinstance(interface.nodes, dict) else {}
+            via_mqtt = bool(node_obj.get("viaMqtt")) if isinstance(node_obj, dict) else False
+            if not via_mqtt:
+                via_mqtt = bool(mqtt_nodes.get(str(nid), {}).get("mqtt"))
             node_list.append({
                 "id": nid,
                 "shortName": sn,
                 "longName": ln,
                 "network": "meshtastic",
+                "via_mqtt": via_mqtt,
             })
     # v0.7.0: include MeshCore contacts so the UI/map sees both networks
     if meshcore_manager is not None:
@@ -5164,6 +5196,15 @@ def dashboard():
             (isMC ? 'background:#6a3df0;color:#fff;' : 'background:#1e88e5;color:#fff;');
           mainLine.appendChild(netBadge);
 
+          // v0.7.2.4: MQTT badge — node is being heard over MQTT (vs direct RF)
+          if (n.via_mqtt) {
+            const mqttBadge = document.createElement('span');
+            mqttBadge.textContent = '☁ MQTT';
+            mqttBadge.title = 'Heard via MQTT (not direct RF)';
+            mqttBadge.style.cssText = 'margin-left:6px;font-size:0.7em;font-weight:bold;padding:1px 5px;border-radius:8px;vertical-align:middle;background:#00897b;color:#fff;';
+            mainLine.appendChild(mqttBadge);
+          }
+
           const editNameBtn = document.createElement('span');
           editNameBtn.textContent = '✏️';
           editNameBtn.title = 'Set custom name';
@@ -5463,17 +5504,26 @@ def dashboard():
           // v0.7.0: distinguish networks on the map. MeshCore = purple dot, Meshtastic = default blue pin.
           let isMC = (gps.network === 'meshcore') || (node && node.network === 'meshcore');
           let netName = isMC ? 'MeshCore' : 'Meshtastic';
-          popup = `<div style="font-size:0.75em;font-weight:bold;color:${isMC ? '#a98bff' : '#7ec3ff'};margin-bottom:2px;">${isMC ? '🟣 MeshCore' : '🔵 Meshtastic'}</div>` + popup;
+          // v0.7.2.4: flag nodes heard via MQTT (not direct RF).
+          let viaMqtt = !!(node && node.via_mqtt) || !!gps.via_mqtt;
+          if (viaMqtt) popup += `<br><span style="color:#26a69a;font-weight:bold;">☁ Heard via MQTT</span>`;
+          let netHdr = (isMC ? '🟣 MeshCore' : '🔵 Meshtastic') + (viaMqtt ? ' · ☁ MQTT' : '');
+          popup = `<div style="font-size:0.75em;font-weight:bold;color:${isMC ? '#a98bff' : '#7ec3ff'};margin-bottom:2px;">${netHdr}</div>` + popup;
           // Create marker with permanent shortname tooltip
           let marker;
           if (isMC) {
             marker = L.circleMarker([gps.lat, gps.lon], {
               radius: 8, color: '#6a3df0', fillColor: '#a98bff', fillOpacity: 0.9, weight: 2
             }).bindPopup(popup, {maxWidth: 400});
+          } else if (viaMqtt) {
+            // MQTT-heard Meshtastic node = teal circle marker (vs direct-RF blue pin)
+            marker = L.circleMarker([gps.lat, gps.lon], {
+              radius: 8, color: '#00897b', fillColor: '#4db6ac', fillOpacity: 0.9, weight: 2
+            }).bindPopup(popup, {maxWidth: 400});
           } else {
             marker = L.marker([gps.lat, gps.lon]).bindPopup(popup, {maxWidth: 400});
           }
-          marker.bindTooltip((cName || name) + (isMC ? ' [MC]' : ''), { permanent: true, direction: 'right', offset: [12, 0], className: 'leaflet-marker-label' });
+          marker.bindTooltip((cName || name) + (isMC ? ' [MC]' : '') + (viaMqtt ? ' ☁' : ''), { permanent: true, direction: 'right', offset: [12, 0], className: 'leaflet-marker-label' });
           marker.addTo(nodeMapInstance);
           nodeMapMarkers.push(marker);
           nodeMarkerLookup[nid] = marker;
@@ -6406,7 +6456,7 @@ def dashboard():
       </div>
     </div>
     <div class="panel-body" style="padding:6px 10px 10px;">
-      <canvas id="trafficCanvas" height="140" style="width:100%;height:140px;display:block;background:#0a0a0a;border-radius:6px;"></canvas>
+      <canvas id="trafficCanvas" height="70" style="width:100%;height:70px;display:block;background:#0a0a0a;border-radius:6px;"></canvas>
       <div style="display:flex;gap:14px;margin-top:6px;font-size:0.78em;color:#aaa;flex-wrap:wrap;">
         <span><span style="display:inline-block;width:10px;height:10px;background:#1e88e5;border-radius:2px;margin-right:4px;"></span>RX (all packets received)</span>
         <span><span style="display:inline-block;width:10px;height:10px;background:#ffb300;border-radius:2px;margin-right:4px;"></span>TX (sent)</span>
@@ -6563,7 +6613,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2.3 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2.4 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -7188,7 +7238,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2.3 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2.4 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>
