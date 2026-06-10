@@ -2611,7 +2611,7 @@ def dashboard():
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
   <style>
-  :root { --theme-color: #ffa500; --bg-primary: #000; --bg-panel: #111; --bg-panel-glass: rgba(17,17,17,0.82); --bg-input: #222; --text-primary: #fff; --text-muted: #aaa; --border-radius: 10px; --color-map: #ffa500; --color-send: #ffa500; --color-dm: #ffa500; --color-channel: #ffa500; --color-nodes: #ffa500; --color-discord: #ffa500; }
+  :root { --theme-color: #ffa500; --bg-primary: #000; --bg-panel: #111; --bg-panel-glass: rgba(17,17,17,0.65); --bg-input: #222; --text-primary: #fff; --text-muted: #aaa; --border-radius: 10px; --color-map: #ffa500; --color-send: #ffa500; --color-dm: #ffa500; --color-channel: #ffa500; --color-nodes: #ffa500; --color-discord: #ffa500; }
   html, body { margin: 0; padding: 0; }
   /* Beta Disclaimer Modal */
   #disclaimerOverlay { position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:100000; display:flex; align-items:center; justify-content:center; }
@@ -3189,7 +3189,8 @@ def dashboard():
       bgMeshEnabled: true,
       bgMeshSpeed: 1.0,
       bgMeshColor: "#ffa500",
-      bgMeshThickness: 2.0
+      bgMeshThickness: 2.0,
+      bgPanelOpacity: 0.65
     };
     let hueRotateInterval = null;
     let currentHue = 0;
@@ -3601,7 +3602,9 @@ def dashboard():
       document.getElementById('bgMeshSpeed').value = uiSettings.bgMeshSpeed || 1.0;
       document.getElementById('bgMeshColor').value = uiSettings.bgMeshColor || '#ffa500';
       document.getElementById('bgMeshThickness').value = uiSettings.bgMeshThickness || 2.0;
+      document.getElementById('bgPanelOpacity').value = (uiSettings.bgPanelOpacity != null ? uiSettings.bgPanelOpacity : 0.65);
       applyMeshBg();
+      applyPanelOpacity();
 
       // Apply button
       document.getElementById('applySettingsBtn').addEventListener('click', function() {
@@ -3641,7 +3644,9 @@ def dashboard():
         uiSettings.bgMeshSpeed = parseFloat(document.getElementById('bgMeshSpeed').value);
         uiSettings.bgMeshColor = document.getElementById('bgMeshColor').value;
         uiSettings.bgMeshThickness = parseFloat(document.getElementById('bgMeshThickness').value);
+        uiSettings.bgPanelOpacity = parseFloat(document.getElementById('bgPanelOpacity').value);
         applyMeshBg();
+        applyPanelOpacity();
         // Manual GPS
         uiSettings.myLat = document.getElementById('myLatInput').value;
         uiSettings.myLon = document.getElementById('myLonInput').value;
@@ -3874,6 +3879,14 @@ def dashboard():
     function applyMeshBg() {
       if (uiSettings.bgMeshEnabled === false) stopMeshBg();
       else startMeshBg();
+    }
+    // v0.7.2.5: panel translucency so the mesh grid shows through the UI boxes.
+    function applyPanelOpacity() {
+      let op = Number(uiSettings.bgPanelOpacity);
+      if (isNaN(op)) op = 0.65;
+      op = Math.max(0.1, Math.min(1, op));
+      // base panel color is #111 (17,17,17)
+      document.documentElement.style.setProperty('--bg-panel-glass', 'rgba(17,17,17,' + op.toFixed(2) + ')');
     }
     // Per-node sound management
     function renderNodeSoundEntries() {
@@ -7293,6 +7306,9 @@ def dashboard():
 
           <label for="bgMeshThickness">Mesh Line Thickness</label>
           <input type="range" id="bgMeshThickness" min="0.5" max="5" step="0.5" value="2" style="width:100%;">
+
+          <label for="bgPanelOpacity">Box Opacity</label>
+          <input type="range" id="bgPanelOpacity" min="0.2" max="1" step="0.05" value="0.65" style="width:100%;" title="Lower = more transparent boxes (more grid shows through)">
         </div>
 
         <h3>🗺️ Offline Map Image</h3>
