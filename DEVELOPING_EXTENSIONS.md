@@ -294,6 +294,18 @@ def on_message(self, message: str, metadata: dict | None = None) -> None:
 
 **Do NOT** return a response from `on_message`. Use `handle_command` for responses, or `send_to_mesh()` for async replies.
 
+> #### Works on both networks (v0.7.0)
+>
+> Because MeshCore is now a core radio feeding the *same* pipeline as Meshtastic,
+> your extension's `on_message`, `handle_command`, `on_emergency`, and `send_message`
+> hooks fire for traffic from **both** networks automatically — no extra work. The
+> `metadata` dict includes a **`"network"`** key (`"meshtastic"` or `"meshcore"`) so
+> you can tell where a message came from and, if you wish, route replies accordingly.
+> For outbound sends, `app_context` exposes `web_send(message, network, mode, ...)`
+> and `resolve_send_networks(network)` where `network` is `"meshtastic"`,
+> `"meshcore"`, `"both"`, or `"auto"`. The core also passes `meshcore_manager` in
+> `app_context` for direct MeshCore operations when needed.
+
 ### on_emergency(message, gps_coords)
 
 Called when `/emergency` or `/911` is triggered on the mesh.
@@ -361,6 +373,41 @@ def call_mcp_tool(self, name: str, arguments: dict) -> str:
         return self._weather_for(arguments.get("city", ""))
     return f"Unknown tool: {name}"
 ```
+
+---
+
+## Channel Agents (v0.7.0+)
+
+A user can **assign a mesh channel to your extension** so all plain-text (non-command)
+traffic on that channel is handled by it — like a dedicated assistant channel
+(OpenClaw, Hermes, Home Assistant, etc.). This generalizes the old Home Assistant
+per-channel routing.
+
+Configure it in the top-level `config.json` `channel_agents` block (not the
+extension's own config):
+
+```jsonc
+"channel_agents": {
+  "7": { "agent": "extension", "slug": "openclaw" },
+  "6": { "agent": "ai", "provider": "hermes" },
+  "8": { "agent": "ai", "provider": "home_assistant", "require_pin": true }
+}
+```
+
+To be an extension channel agent, implement **`handle_channel_message`** (preferred).
+If you don't, the core falls back to your `get_ai_response()` (if you act as an AI
+provider) or a configured `command`:
+
+```python
+def handle_channel_message(self, text: str, node_info: dict) -> str | None:
+    """Handle plain-text traffic on a channel assigned to this extension.
+    node_info has: node_id, shortname, channel_idx. Return the reply text,
+    or None to let the core fall through."""
+    return self._ask_agent(text, channel=node_info.get("channel_idx"))
+```
+
+Channels with an assigned agent always respond, bypassing the global
+`reply_in_channels` setting. Slash commands still work normally on these channels.
 
 ---
 
@@ -594,7 +641,6 @@ The `extensions/` directory includes 30 working extensions you can reference:
 | `bbs` | Complex | SQLite database + thread safety + subcommands |
 | `aprs` | Complex | Raw TCP sockets + protocol parsing |
 | `discord` | Complex | Webhook + bot + Flask route |
-| `meshcore` | Complex | Serial/TCP bridge + bidirectional channel mapping |
 | `openclaw` | Medium | External AI agent bridge + polling + emergency forwarding |
 
 ---

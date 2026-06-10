@@ -384,6 +384,15 @@ HOME_ASSISTANT_ENABLE_PIN = bool(config.get("home_assistant_enable_pin", False))
 HOME_ASSISTANT_SECURE_PIN = str(config.get("home_assistant_secure_pin", "1234"))
 HOME_ASSISTANT_ENABLED = bool(config.get("home_assistant_enabled", False))
 HOME_ASSISTANT_CHANNEL_INDEX = int(config.get("home_assistant_channel_index", -1))
+
+# v0.7.0: Channel Agents — assign a channel to a specific AI provider or
+# extension agent (OpenClaw, Hermes, Home Assistant, etc.), generalizing the
+# Home Assistant per-channel routing. Plain-text (non-command) traffic on an
+# assigned channel is routed to that agent. Shape (channel index -> spec):
+#   { "6": {"agent": "ai", "provider": "hermes"},
+#     "7": {"agent": "extension", "slug": "openclaw"},
+#     "8": {"agent": "ai", "provider": "home_assistant", "require_pin": true} }
+CHANNEL_AGENTS = config.get("channel_agents", {}) or {}
 MAX_CHUNK_SIZE = config.get("chunk_size", 200)
 MAX_CHUNKS = int(config.get("max_ai_chunks", 5))
 CHUNK_DELAY = config.get("chunk_delay", 10)
@@ -1250,32 +1259,35 @@ def send_to_home_assistant(user_message):
         print(f"⚠️ HA request failed: {e}")
         return None
 
-def get_ai_response(prompt):
-    if AI_PROVIDER == "lmstudio":
+def get_ai_response(prompt, provider=None):
+    """Get an AI response. ``provider`` overrides the global AI_PROVIDER so a
+    channel agent can pin a specific provider (e.g. hermes) per channel."""
+    prov = (provider or AI_PROVIDER or "").lower()
+    if prov == "lmstudio":
         return send_to_lmstudio(prompt)
-    elif AI_PROVIDER == "openai":
+    elif prov == "openai":
         return send_to_openai(prompt)
-    elif AI_PROVIDER == "ollama":
+    elif prov == "ollama":
         return send_to_ollama(prompt)
-    elif AI_PROVIDER == "claude":
+    elif prov == "claude":
         return send_to_claude(prompt)
-    elif AI_PROVIDER == "gemini":
+    elif prov == "gemini":
         return send_to_gemini(prompt)
-    elif AI_PROVIDER == "grok":
+    elif prov == "grok":
         return send_to_grok(prompt)
-    elif AI_PROVIDER == "openrouter":
+    elif prov == "openrouter":
         return send_to_openrouter(prompt)
-    elif AI_PROVIDER == "groq":
+    elif prov == "groq":
         return send_to_groq(prompt)
-    elif AI_PROVIDER == "deepseek":
+    elif prov == "deepseek":
         return send_to_deepseek(prompt)
-    elif AI_PROVIDER == "mistral":
+    elif prov == "mistral":
         return send_to_mistral(prompt)
-    elif AI_PROVIDER == "hermes":
+    elif prov == "hermes":
         return send_to_hermes(prompt)
-    elif AI_PROVIDER == "openai_compatible":
+    elif prov == "openai_compatible":
         return send_to_openai_compatible(prompt)
-    elif AI_PROVIDER == "home_assistant":
+    elif prov == "home_assistant":
         # Delegate to the Home Assistant extension if loaded, else fall back to built-in
         if extension_loader:
             ha_ext = extension_loader.get_ai_provider("home_assistant")
@@ -1283,7 +1295,7 @@ def get_ai_response(prompt):
                 return ha_ext.get_ai_response(prompt)
         return send_to_home_assistant(prompt)
     else:
-        print(f"⚠️ Unknown AI provider: {AI_PROVIDER}")
+        print(f"⚠️ Unknown AI provider: {prov}")
         return None
 
 def send_discord_message(content):
@@ -1402,6 +1414,94 @@ def route_message_text(user_message, channel_idx):
         info_print(f"[Info] Using default AI provider: {AI_PROVIDER}")
         resp = get_ai_response(user_message)
         return resp if resp else "🤖 [No AI response]"
+
+# -----------------------------
+# v0.7.0 — Channel Agents (assign a channel to an AI provider or extension)
+# -----------------------------
+def get_channel_agent(channel_idx):
+    """Return the agent spec assigned to a channel, or None.
+
+    Supports the generalized ``channel_agents`` config plus backward-compat with
+    the legacy ``home_assistant_channel_index`` setting.
+    """
+    if channel_idx is None:
+        return None
+    spec = CHANNEL_AGENTS.get(str(channel_idx))
+    if isinstance(spec, dict) and spec.get("enabled", True):
+        return spec
+    # Legacy Home Assistant channel mapping still works.
+    if HOME_ASSISTANT_ENABLED and channel_idx == HOME_ASSISTANT_CHANNEL_INDEX:
+        return {"agent": "ai", "provider": "home_assistant",
+                "require_pin": HOME_ASSISTANT_ENABLE_PIN}
+    return None
+
+
+def route_channel_agent(text, channel_idx, sender_id):
+    """Route plain-text traffic on an assigned channel to its agent.
+
+    Returns the agent's response string, or None if there is no agent for this
+    channel (so the caller can fall through to default behavior).
+    """
+    spec = get_channel_agent(channel_idx)
+    if not spec:
+        return None
+
+    # Optional per-channel PIN gate (mirrors Home Assistant security).
+    if spec.get("require_pin"):
+        if not pin_is_valid(text):
+            return "Security code missing/invalid. Format: 'PIN=XXXX your msg'"
+        text = strip_pin(text)
+
+    agent = (spec.get("agent") or "ai").lower()
+
+    if agent == "ai":
+        provider = spec.get("provider") or AI_PROVIDER
+        info_print(f"[ChannelAgent] ch{channel_idx} → AI provider '{provider}'")
+        resp = get_ai_response(text, provider=provider)
+        return resp if resp else "🤖 [No response]"
+
+    if agent == "extension":
+        slug = spec.get("slug", "")
+        if not (extension_loader and slug):
+            return None
+        ext = extension_loader.loaded.get(slug)
+        if not ext:
+            info_print(f"[ChannelAgent] extension '{slug}' not loaded for ch{channel_idx}")
+            return None
+        node_info = {
+            "node_id": sender_id,
+            "shortname": get_node_shortname(sender_id),
+            "channel_idx": channel_idx,
+        }
+        info_print(f"[ChannelAgent] ch{channel_idx} → extension '{slug}'")
+        # Preferred: a dedicated channel-watch handler.
+        if hasattr(ext, "handle_channel_message"):
+            try:
+                resp = ext.handle_channel_message(text, node_info)
+                if resp:
+                    return resp
+            except Exception as e:
+                dprint(f"[ChannelAgent] {slug}.handle_channel_message error: {e}")
+        # Next: extension acts as an AI provider (e.g. Home Assistant, OpenClaw).
+        if hasattr(ext, "get_ai_response"):
+            try:
+                resp = ext.get_ai_response(text)
+                if resp:
+                    return resp
+            except Exception as e:
+                dprint(f"[ChannelAgent] {slug}.get_ai_response error: {e}")
+        # Fallback: run the extension's primary slash command with the text.
+        cmd = spec.get("command")
+        if cmd:
+            try:
+                resp = extension_loader.route_command(cmd, text, node_info)
+                if resp:
+                    return resp
+            except Exception as e:
+                dprint(f"[ChannelAgent] {slug} command route error: {e}")
+        return None
+
+    return None
 
 # -----------------------------
 # Revised Command Handler (Case-Insensitive)
@@ -1582,7 +1682,10 @@ def parse_incoming_text(text, sender_id, is_direct, channel_idx):
     return None
   if is_direct and not config.get("reply_in_directs", True):
     return None
-  if (not is_direct) and channel_idx != HOME_ASSISTANT_CHANNEL_INDEX and not config.get("reply_in_channels", True):
+  # Channels with an assigned agent (Home Assistant, OpenClaw, Hermes, etc.)
+  # always respond, bypassing the global reply_in_channels gate.
+  has_agent = (not is_direct) and (get_channel_agent(channel_idx) is not None)
+  if (not is_direct) and not has_agent and not config.get("reply_in_channels", True):
     return None
   if text.startswith("/"):
     cmd = text.split()[0]
@@ -1590,8 +1693,8 @@ def parse_incoming_text(text, sender_id, is_direct, channel_idx):
     return resp
   if is_direct:
     return get_ai_response(text)
-  if HOME_ASSISTANT_ENABLED and channel_idx == HOME_ASSISTANT_CHANNEL_INDEX:
-    return route_message_text(text, channel_idx)
+  if has_agent:
+    return route_channel_agent(text, channel_idx, sender_id)
   return None
 
 # -----------------------------
@@ -2005,6 +2108,24 @@ def api_mcp_info():
     info = mcp_server.info()
     info["available"] = True
     return jsonify(info)
+
+@app.route("/api/channel_agents", methods=["GET"])
+def api_channel_agents():
+    """Channel→agent assignments for the web UI (read-only).
+
+    Includes the legacy Home Assistant channel mapping for completeness.
+    """
+    agents = dict(CHANNEL_AGENTS) if isinstance(CHANNEL_AGENTS, dict) else {}
+    out = {}
+    for ch, spec in agents.items():
+        if isinstance(spec, dict):
+            out[str(ch)] = {k: v for k, v in spec.items()
+                            if k in ("agent", "provider", "slug", "command", "require_pin", "enabled")}
+    if HOME_ASSISTANT_ENABLED and HOME_ASSISTANT_CHANNEL_INDEX >= 0 \
+            and str(HOME_ASSISTANT_CHANNEL_INDEX) not in out:
+        out[str(HOME_ASSISTANT_CHANNEL_INDEX)] = {
+            "agent": "ai", "provider": "home_assistant", "legacy": True}
+    return jsonify({"channel_agents": out})
 
 # -----------------------------
 # v0.7.0: firmware / software update endpoints

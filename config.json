@@ -75,6 +75,9 @@
     "mesh_api_repo": "mr-tbot/mesh-api"
   },
 
+  "_comment_channel_agents_v070": "v0.7.0: assign a channel to a specific agent so its plain-text traffic is handled by that agent (generalizes Home Assistant per-channel routing). agent 'ai' routes to a named AI provider (openai, hermes, ollama, home_assistant, etc.); agent 'extension' routes to a loaded extension (e.g. openclaw) via its handle_channel_message()/get_ai_response()/command. Optional require_pin gates a channel. Example: { \"6\": {\"agent\":\"ai\",\"provider\":\"hermes\"}, \"7\": {\"agent\":\"extension\",\"slug\":\"openclaw\"} }",
+  "channel_agents": {},
+
   "ai_command": "",
   "ai_provider": "lmstudio, openai, ollama, claude, gemini, grok, openrouter, groq, deepseek, mistral, or openai_compatible",
   "system_prompt": "You are a helpful assistant responding to mesh network chats. Respond in as few words as possible while still answering fully.",

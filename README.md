@@ -81,8 +81,8 @@ In short, MESH-API bridges the gap between **mesh services** and **online/locall
 > **Disclaimer:**  
 > This project is **NOT ASSOCIATED** with the official Meshtastic Project. It is provided solely as an extension to add AI and advanced features to your Mesh network.  
 
-> **v0.6.0 — Full Release:**  
-> This is the full v0.6.0 release, incorporating community‑reported bug fixes, a visual dashboard overhaul, and updated dependencies. While significantly more stable than earlier pre‑releases, please avoid relying on it for mission‑critical tasks or emergencies. Always have backup communication methods available and use responsibly.  
+> **v0.7.0 Beta — Initial Full MeshCore Support:**  
+> This release makes MeshCore a first-class radio and adds the MCP server and firmware-update system. **These features are widely untested in the field — I am actively seeking community feedback.** Run it with a Meshtastic node, a MeshCore node, or both, and please report what works and what breaks. Avoid relying on it for mission‑critical tasks or emergencies; always keep backup communication methods available and use responsibly.  
 
 >  
 > *I am one robot using other robots to write this code. Some features are still untested in the field. Check the GitHub issues for fixes or feedback!*
@@ -96,6 +96,15 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
 
 ## Features
 
+- **Multi-Radio: Meshtastic, MeshCore, or Both** *(New in v0.7.0)*
+  - **MeshCore is a first-class, core-owned radio** (not an extension) on equal footing with Meshtastic, connecting over serial / TCP / BLE.
+  - Run a **Meshtastic radio only**, a **MeshCore radio only** (fully standalone — no Meshtastic device required), or **one of each** with MESH-API as a cross-network man-in-the-middle.
+  - Slash commands, the AI assistant, and **every extension work across both networks**. Send to one network or both at once.
+  - **WebUI adapts** — per-network connection banner, node **network filter** with collapsible Meshtastic/MeshCore sections, network badges on nodes & messages, distinct map markers, MeshCore group/private channels in the send form, and DMs to MeshCore contacts.
+- **MCP (Model Context Protocol) Server** *(New in v0.7.0)*
+  - Exposes MESH-API core functions **and** extensions as MCP **tools** at `POST /mcp`, so external AI agents (Claude, Perplexity, Hermes, custom) can drive the mesh as an agentic backend. Disabled by default; bearer-token auth. See **[MCP Server](#mcp-server-model-context-protocol)**.
+- **Firmware & Software Updates** *(New in v0.7.0)*
+  - Detects your connected Meshtastic/MeshCore device and notifies you (🔄 Updates badge) when newer **Meshtastic firmware**, **MeshCore firmware**, or **MESH-API** is available, with **stable / beta / alpha** release-channel selection. Optional ESP32 over-USB flashing (off by default).
 - **Plugin-Based Extensions System** *(New in v0.6.0)*  
   - 30 built-in extensions across 7 categories: Communication, Notifications, Emergency/Weather, Ham Radio/Off-Grid, Smart Home, Mesh Bridging, and AI Agents.
   - Drop-in plugin architecture — add or remove extensions by copying a folder. No core code changes required.
@@ -103,7 +112,7 @@ The Meshtastic logo trademark is the trademark of Meshtastic LLC.
   - **WebUI Extensions Manager** — view, enable/disable, and configure extensions from the dashboard.
   - See the [Extensions Reference](#extensions-reference) section below for full details on all built-in extensions, or [Developing Custom Extensions](#developing-custom-extensions) to build your own.
 - **Multiple AI Providers**  
-  - Support for **Local** models (LM Studio, Ollama), **OpenAI**, **Claude**, **Gemini**, **Grok**, **OpenRouter**, **Groq**, **DeepSeek**, **Mistral**, generic OpenAI-compatible endpoints, and **Home Assistant** integration.
+  - Support for **Local** models (LM Studio, Ollama), **OpenAI**, **Claude**, **Gemini**, **Grok**, **OpenRouter**, **Groq**, **DeepSeek**, **Mistral**, **Hermes** (Nous Research), generic OpenAI-compatible endpoints, and **Home Assistant** integration.
 - **Home Assistant Integration**  
   - Seamlessly forward messages from a designated channel to Home Assistant’s conversation API. Optionally secure the integration using a PIN.
 - **NASA Space Weather Monitoring**  
@@ -323,90 +332,20 @@ MESH-API supports **two mesh radio platforms** that can operate independently or
 
 **All MESH-API features** — AI commands, slash commands, emergency alerts, extensions, WebUI dashboard — work natively over the Meshtastic connection.
 
-### MeshCore (Extension-Based Bridge)
+### MeshCore (First-Class Radio — v0.7.0)
 
-[MeshCore](https://meshcore.co.uk/) is a lightweight, multi-hop LoRa mesh firmware focused on embedded packet routing. MESH-API supports MeshCore through the **MeshCore extension** (`extensions/meshcore/`), which connects to a **separate** MeshCore companion-firmware device.
+[MeshCore](https://meshcore.co.uk/) is a lightweight, multi-hop LoRa mesh firmware focused on embedded packet routing. **As of v0.7.0, MeshCore is a first-class radio owned by the MESH-API core** (`meshcore_core.py`) — *not* an extension. It connects directly to a MeshCore companion-firmware device over **USB serial, TCP, or BLE**, and its inbound traffic flows through the **same network-agnostic pipeline** as Meshtastic, so commands, AI, and every extension work on it natively.
 
-> **Hardware requirement:** You need **two separate LoRa devices** — one running Meshtastic (connected to MESH-API core) and one running MeshCore companion firmware (connected to the MeshCore extension via USB serial or TCP/WiFi). Each device has its own independent radio settings.
+> ⬆️ **Upgrading from an earlier build?** The old `extensions/meshcore` bridge plugin is **deprecated** and automatically defers to the core when the core MeshCore radio is enabled — you do not need (and should not use) the extension anymore. Move your settings into the `meshcore` block of `config.json` (see below).
 
-#### How It Works
+You can run **one Meshtastic radio, one MeshCore radio, or one of each.** With both connected, MESH-API acts as the man-in-the-middle, optionally bridging chat between the two networks. See **[Running With Meshtastic, MeshCore, or Both](#running-with-meshtastic-meshcore-or-both-v070)** just below for the full configuration, topologies, and WebUI behavior.
 
-```
-┌──────────────┐           ┌──────────────┐           ┌──────────────┐
-│  Meshtastic  │◀── USB ──▶│   MESH-API   │◀── USB ──▶│   MeshCore   │
-│    Device    │  or WiFi  │   (Server)   │  or TCP   │   Companion  │
-│              │           │              │           │    Device    │
-└──────┬───────┘           └──────┬───────┘           └──────┬───────┘
-       │                          │                          │
-  Meshtastic                 Bridges chat              MeshCore
-  Mesh Network              + commands                 Mesh Network
-```
+**Quick start:**
 
-- **Bidirectional chat bridging** — Messages flow between configurable Meshtastic and MeshCore channels, tagged with their origin (`[MC]` for MeshCore, `[MT]` for Meshtastic) to show where each message came from.
-- **Full command support** — MeshCore users can issue the same `/slash` commands that Meshtastic users can (AI queries, `/help`, `/emergency`, custom commands, etc.).
-- **Direct message support** — Optionally bridge DMs between the two networks.
-- **Emergency relay** — Emergency alerts triggered on either network are forwarded to the other.
-- **Independent command processing** — MeshCore users get AI responses sent directly back to their MeshCore device without needing to go through Meshtastic.
-
-#### MeshCore Quick Setup
-
-1. **Install the MeshCore Python library:**
-   ```bash
-   pip install meshcore
-   ```
-   *(This is already included in `requirements.txt`)*
-
-2. **Flash a companion device** with MeshCore companion firmware:
-   - Visit [https://flasher.meshcore.co.uk](https://flasher.meshcore.co.uk)
-   - Flash the **Companion** firmware type (Serial or WiFi variant depending on your setup)
-
-3. **Enable the extension** — edit `extensions/meshcore/config.json`:
-   ```json
-   {
-     "enabled": true,
-     "connection_type": "serial",
-     "serial_port": "COM5",
-     "serial_baud": 115200,
-     "bridge_enabled": true,
-     "bridge_meshcore_channel_to_meshtastic_channel": { "0": 1 },
-     "bridge_meshtastic_channels_to_meshcore_channel": { "1": 0 }
-   }
-   ```
-
-4. **Restart MESH-API** — the extension will connect to the MeshCore device and begin bridging.
-
-5. **Verify** — use the `/meshcore` command from either network, or visit `http://localhost:5000/api/meshcore/status`.
-
-#### Channel Mapping
-
-Channel mapping is defined by two config keys:
-
-- **`bridge_meshcore_channel_to_meshtastic_channel`** — Maps MeshCore channel numbers to Meshtastic channel numbers. Example: `{"0": 1}` means MeshCore public channel 0 bridges to Meshtastic channel 1.
-- **`bridge_meshtastic_channels_to_meshcore_channel`** — The reverse direction. Example: `{"1": 0}` means Meshtastic channel 1 bridges to MeshCore channel 0.
-
-You can map multiple channels in each direction:
-```json
-{
-  "bridge_meshcore_channel_to_meshtastic_channel": { "0": 1, "1": 2 },
-  "bridge_meshtastic_channels_to_meshcore_channel": { "1": 0, "2": 1 }
-}
-```
-
-#### Echo Prevention
-
-The extension includes multiple layers of loop prevention:
-- **Origin tags** (`[MC]` / `[MT]`) — messages carrying these tags are recognized as bridged and not re-bridged.
-- **AI prefix detection** — AI-generated responses are not echoed back.
-- **Rolling buffer** — a buffer of the last 50 bridged messages prevents exact duplicates.
-
-#### Connection Types
-
-| Type | Config | Description |
-|------|--------|-------------|
-| USB Serial | `"connection_type": "serial"` | Direct USB connection to a MeshCore companion device |
-| TCP/WiFi | `"connection_type": "tcp"` | Network connection to a WiFi-enabled MeshCore companion |
-
-See the full config reference in the [MeshCore Extension](#meshcore) section below.
+1. `pip install meshcore` *(already in `requirements.txt`)*.
+2. Flash a companion device with MeshCore **Companion** firmware (USB‑serial, BLE, or TCP variant) from [https://flasher.meshcore.co.uk](https://flasher.meshcore.co.uk).
+3. Enable and configure the radio in the **`meshcore`** block of [config.json](config.json) (set `enabled: true`, pick `connection_type`, and the port/host/address).
+4. Restart MESH-API. The 🟣 MeshCore status appears in the connection banner, MeshCore nodes show on the harmonized map, and you can send to MeshCore (or both networks) from the dashboard.
 
 ---
 
@@ -594,6 +533,44 @@ v0.7.0 adds a comprehensive, **safe-by-default** update system (`firmware_update
 
 ---
 
+## Channel Agents — Assign a Channel to an Agent
+
+v0.7.0 generalizes the old Home Assistant per-channel routing into **Channel
+Agents**: assign any mesh channel to a specific agent, and all plain-text
+(non-command) traffic on that channel is handled by it. Use it to dedicate a
+channel to **OpenClaw**, **Hermes**, **Home Assistant**, or any AI provider —
+on either Meshtastic or MeshCore.
+
+Configure it in the top-level `channel_agents` block of [config.json](config.json),
+mapping a channel index (as seen by MESH-API) to an agent spec:
+
+```jsonc
+"channel_agents": {
+  "6": { "agent": "ai", "provider": "hermes" },          // ch6 → Hermes
+  "7": { "agent": "extension", "slug": "openclaw" },      // ch7 → OpenClaw agent
+  "5": { "agent": "ai", "provider": "home_assistant" },   // ch5 → Home Assistant
+  "8": { "agent": "ai", "provider": "openai", "require_pin": true }
+}
+```
+
+- **`agent: "ai"`** routes the channel to a named AI provider (`openai`, `hermes`,
+  `ollama`, `claude`, `home_assistant`, etc.) — independent of the global
+  `ai_provider`, so different channels can use different models.
+- **`agent: "extension"`** routes to a loaded extension (e.g. `openclaw`) via its
+  `handle_channel_message()` hook, falling back to `get_ai_response()` or a
+  configured `command`. See [DEVELOPING_EXTENSIONS.md](DEVELOPING_EXTENSIONS.md#channel-agents-v070).
+- **`require_pin: true`** gates the channel behind a `PIN=XXXX` prefix (like the
+  Home Assistant secure mode).
+- Channels with an assigned agent **always respond**, bypassing the global
+  `reply_in_channels` setting. Slash commands still work normally there.
+- The legacy `home_assistant_channel_index` setting continues to work and is
+  surfaced via `GET /api/channel_agents`.
+
+> Channel indices differ between physical MeshCore devices — assign the agent to
+> the index **as MESH-API receives it** (visible in the logs / message panel).
+
+---
+
 ## Extensions Reference
 
 > **Note:** The extensions system and all corresponding extensions are **new and largely untested**. Please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues) so they may be investigated and addressed.
@@ -612,7 +589,7 @@ Each extension is a self-contained plugin in the `extensions/` directory with it
 - **[Emergency & Weather Extensions](#emergency--weather-extensions):** [NWS Alerts](#nws-alerts) · [OpenWeatherMap](#openweathermap) · [USGS Earthquakes](#usgs-earthquakes) · [GDACS](#gdacs) · [Amber Alerts](#amber-alerts) · [NASA Space Weather](#nasa-space-weather)
 - **[Ham Radio & Off-Grid Extensions](#ham-radio--off-grid-extensions):** [Winlink](#winlink) · [APRS](#aprs) · [BBS](#bbs)
 - **[Smart Home Extensions](#smart-home-extensions):** [Home Assistant (Extension)](#home-assistant-extension)
-- **[Mesh Bridging Extensions](#mesh-bridging-extensions):** [MeshCore](#meshcore)
+- **[Mesh Bridging Extensions](#mesh-bridging-extensions):** [MeshCore (deprecated — now a core radio)](#meshcore)
 - **[AI Agent Extensions](#ai-agent-extensions):** [OpenClaw](#openclaw)
 
 ---
@@ -1449,40 +1426,25 @@ This extension functions as an **AI provider** — when `ai_provider` is set to 
 
 #### MeshCore
 
-Bidirectional bridge between the Meshtastic mesh network and a [MeshCore](https://meshcore.co.uk/) mesh network. Requires a separate MeshCore companion-firmware device connected via USB serial or TCP/WiFi. See also [Supported Mesh Networks — MeshCore](#meshcore-extension-based-bridge) above for setup instructions.
-
-**Commands:**
-| Command | Description |
-|---------|-------------|
-| `/meshcore` | Show MeshCore bridge status (connected device, bridge state, channel map) |
-
-**Config (`extensions/meshcore/config.json`):**
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enabled` | bool | `false` | Enable the extension |
-| `connection_type` | string | `"serial"` | `"serial"` or `"tcp"` |
-| `serial_port` | string | `""` | Serial port for the MeshCore companion device (e.g. `COM5`, `/dev/ttyACM0`) |
-| `serial_baud` | int | `115200` | Serial baud rate |
-| `tcp_host` | string | `""` | TCP/WiFi host (when `connection_type` is `"tcp"`) |
-| `tcp_port` | int | `5000` | TCP port for MeshCore WiFi companion |
-| `bridge_enabled` | bool | `true` | Enable bidirectional channel bridging |
-| `bridge_meshcore_channel_to_meshtastic_channel` | object | `{"0": 1}` | Map MeshCore channel → Meshtastic channel |
-| `bridge_meshtastic_channels_to_meshcore_channel` | object | `{"1": 0}` | Map Meshtastic channel → MeshCore channel |
-| `bridge_dm` | bool | `false` | Bridge direct messages between networks |
-| `commands_enabled` | bool | `true` | Allow MeshCore users to issue `/commands` |
-| `ai_commands_enabled` | bool | `true` | Allow MeshCore users to send AI queries |
-| `meshcore_origin_tag` | string | `"[MC]"` | Tag prepended to messages originating from MeshCore |
-| `meshtastic_origin_tag` | string | `"[MT]"` | Tag prepended to messages originating from Meshtastic |
-| `emergency_relay` | bool | `true` | Relay emergency alerts between networks |
-| `max_message_length` | int | `200` | Max characters per bridged message |
-| `reconnect_interval` | int | `30` | Seconds between reconnect attempts on disconnect |
-
-**API Endpoints:**
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/meshcore/status` | GET | Returns JSON with connection status, bridge state, and channel mappings |
-
-**Hooks:** `on_message()` (outbound Meshtastic→MeshCore bridging), `on_load()` / `on_unload()` (lifecycle).
+> ⚠️ **Deprecated as of v0.7.0 — MeshCore is now a core radio, not an extension.**
+>
+> The legacy `extensions/meshcore` bridge plugin has been superseded by the
+> **first-class, core-owned MeshCore radio** (`meshcore_core.py`). When the core
+> MeshCore radio is enabled in `config.json`, the old extension automatically
+> defers (it will not open the device or bridge). Do **not** enable both.
+>
+> Configure MeshCore in the `meshcore` block of [config.json](config.json) instead
+> — see **[Running With Meshtastic, MeshCore, or Both](#running-with-meshtastic-meshcore-or-both-v070)**
+> for the full setup. With the core radio you get native cross-network commands,
+> AI, every extension, a harmonized map, DMs, group/private channels, the
+> per-network UI, and firmware update detection — none of which the old bridge
+> plugin provided.
+>
+> **Migrating:** move your old `extensions/meshcore/config.json` values into the
+> `meshcore` block of the main `config.json` (the keys are similarly named:
+> `connection_type`, `serial_port`, `serial_baud`, `tcp_host`/`tcp_port`,
+> `bridge_enabled`, the channel-map objects, and the origin tags), then leave the
+> extension disabled.
 
 ---
 
@@ -2030,7 +1992,7 @@ The `extensions/` directory includes 25+ working extensions you can reference:
 - **MeshCore Routing Support (Initial Implementation — v0.6.0)**
   - MeshCore extension added with bidirectional bridge, command support, and AI integration.
   - Supports USB serial and TCP/WiFi connections to MeshCore companion devices.
-  - See [Supported Mesh Networks — MeshCore](#meshcore-extension-based-bridge) and the [MeshCore extension reference](#meshcore) for details.
+  - *(Superseded in v0.7.0 — MeshCore is now a first-class core radio; see [Running With Meshtastic, MeshCore, or Both](#running-with-meshtastic-meshcore-or-both-v070).)*
 
 ---
 

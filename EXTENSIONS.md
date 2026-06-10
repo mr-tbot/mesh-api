@@ -14,7 +14,7 @@ Each extension is a self-contained plugin in the `extensions/` directory with it
 - **[Emergency & Weather Extensions](#emergency--weather-extensions):** [NWS Alerts](#nws-alerts) · [OpenWeatherMap](#openweathermap) · [USGS Earthquakes](#usgs-earthquakes) · [GDACS](#gdacs) · [Amber Alerts](#amber-alerts) · [NASA Space Weather](#nasa-space-weather)
 - **[Ham Radio & Off-Grid Extensions](#ham-radio--off-grid-extensions):** [Winlink](#winlink) · [APRS](#aprs) · [BBS](#bbs)
 - **[Smart Home Extensions](#smart-home-extensions):** [Home Assistant](#home-assistant)
-- **[Mesh Bridging Extensions](#mesh-bridging-extensions):** [MeshCore](#meshcore)
+- **[Mesh Bridging Extensions](#mesh-bridging-extensions):** [MeshCore](#meshcore) *(deprecated — now a core radio)*
 - **[AI Agent Extensions](#ai-agent-extensions):** [OpenClaw](#openclaw)
 
 ---
@@ -848,38 +848,24 @@ This extension functions as an **AI provider** — when `ai_provider` is set to 
 
 ### MeshCore
 
-Bidirectional bridge between the Meshtastic mesh network and a [MeshCore](https://meshcore.co.uk/) mesh network. Requires a separate MeshCore companion-firmware device connected via USB serial or TCP/WiFi.
+> ## ⚠️ DEPRECATED in v0.7.0 — MeshCore is now a core radio, not an extension
+>
+> As of **v0.7.0**, MeshCore is a **first-class radio owned by the MESH-API core**
+> ([`meshcore_core.py`](meshcore_core.py)), configured in the **`meshcore` block of
+> [config.json](config.json)** — not here. The legacy `extensions/meshcore` bridge plugin
+> is **deprecated**: when the core MeshCore radio is enabled, the plugin detects it and
+> **does not start** (to avoid double-connecting the device).
+>
+> **What to do:** Do **not** enable `extensions/meshcore`. Instead, enable and configure
+> the radio under the top-level `meshcore` block in `config.json`. This gives you the
+> full experience — MeshCore commands, AI, *every* extension, the harmonized map, DMs,
+> group/private channels, and cross-network bridging — instead of the old chat-only bridge.
+> See **[Running With Meshtastic, MeshCore, or Both](README.md#running-with-meshtastic-meshcore-or-both-v070)**
+> and the `meshcore` config reference in [config.json](config.json).
 
-**Commands:**
-| Command | Description |
-|---------|-------------|
-| `/meshcore` | Show MeshCore bridge status (connected device, bridge state, channel map) |
-
-**Config (`extensions/meshcore/config.json`):**
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enabled` | bool | `false` | Enable the extension |
-| `connection_type` | string | `"serial"` | `"serial"` or `"tcp"` |
-| `serial_port` | string | `"/dev/ttyUSB1"` | Serial port for the MeshCore companion device |
-| `serial_baud` | int | `115200` | Serial baud rate |
-| `tcp_host` | string | `"192.168.1.100"` | TCP/WiFi host |
-| `tcp_port` | int | `5000` | TCP port |
-| `auto_reconnect` | bool | `true` | Auto-reconnect on disconnect |
-| `max_reconnect_attempts` | int | `0` | Max reconnect attempts (0 = unlimited) |
-| `reconnect_interval_sec` | int | `30` | Seconds between reconnect attempts |
-| `bridge_enabled` | bool | `true` | Enable bidirectional channel bridging |
-| `bridge_meshcore_channel_to_meshtastic_channel` | object | `{"0": 1}` | Map MeshCore channel → Meshtastic channel |
-| `bridge_meshtastic_channels_to_meshcore_channel` | object | `{"1": 0}` | Map Meshtastic channel → MeshCore channel |
-| `bridge_direct_messages` | bool | `false` | Bridge direct messages between networks |
-| `commands_enabled` | bool | `true` | Allow MeshCore users to issue `/commands` |
-| `command_prefix` | string | `"/"` | Command prefix for MeshCore messages |
-| `meshcore_to_meshtastic_tag` | string | `"[MC]"` | Tag prepended to messages from MeshCore |
-| `meshtastic_to_meshcore_tag` | string | `"[MT]"` | Tag prepended to messages from Meshtastic |
-| `ai_commands_enabled` | bool | `true` | Allow MeshCore users to send AI queries |
-| `ignore_own_messages` | bool | `true` | Prevent echo loops between networks |
-| `max_message_length` | int | `200` | Max characters per bridged message |
-
-**Hooks:** `on_message()` (Meshtastic→MeshCore bridging), `on_emergency()`, `handle_command()`, Flask route `/api/meshcore/status`.
+The legacy bridge plugin (kept only for backward compatibility) provided a bidirectional
+chat bridge between Meshtastic and a separate MeshCore companion device. Its behavior is
+fully superseded by the core radio above.
 
 ---
 

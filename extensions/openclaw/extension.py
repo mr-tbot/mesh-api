@@ -224,6 +224,15 @@ class OpenClawExtension(BaseExtension):
 
         return reply_text
 
+    def handle_channel_message(self, text: str, node_info: dict) -> str | None:
+        """Channel-agent hook (v0.7.0): when a channel is assigned to OpenClaw
+        in config 'channel_agents', plain-text traffic on it is routed here.
+        Reuses handle_command's agent logic (its 'command' arg is unused)."""
+        text = (text or "").strip()
+        if not text:
+            return None
+        return self.handle_command("channel-agent", text, node_info)
+
     # ------------------------------------------------------------------
     # Outbound hook: mesh → OpenClaw (send_message)
     # ------------------------------------------------------------------
