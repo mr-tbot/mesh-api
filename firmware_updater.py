@@ -46,7 +46,7 @@ import zipfile
 from typing import Any, Callable, Optional
 from urllib.request import Request, urlopen
 
-MESH_API_VERSION = "0.7.2"
+MESH_API_VERSION = "0.7.2.1"
 
 # Default upstream GitHub repos (configurable via the ``firmware`` config block).
 DEFAULT_MESHTASTIC_FW_REPO = "meshtastic/firmware"

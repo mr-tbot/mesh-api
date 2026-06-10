@@ -189,7 +189,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.2 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.2.1 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -4442,6 +4442,18 @@ def dashboard():
         else if (p === 'openai_compatible') { setCfgVal('cfg_openai_compatible_url', cfg.openai_compatible_url); setCfgVal('cfg_openai_compatible_api_key', cfg.openai_compatible_api_key); setCfgVal('cfg_openai_compatible_model', cfg.openai_compatible_model); setCfgVal('cfg_openai_compatible_timeout', cfg.openai_compatible_timeout); }
         else { setCfgVal('cfg_'+p+'_api_key', cfg[p+'_api_key']); setCfgVal('cfg_'+p+'_model', cfg[p+'_model']); setCfgVal('cfg_'+p+'_timeout', cfg[p+'_timeout']); }
       });
+      // Hermes (v0.7.0) AI provider
+      setCfgVal('cfg_hermes_api_key', cfg.hermes_api_key);
+      setCfgVal('cfg_hermes_url', cfg.hermes_url);
+      setCfgVal('cfg_hermes_model', cfg.hermes_model);
+      setCfgVal('cfg_hermes_timeout', cfg.hermes_timeout);
+      // Home Assistant AI provider
+      setCfgVal('cfg_home_assistant_url', cfg.home_assistant_url);
+      setCfgVal('cfg_home_assistant_token', cfg.home_assistant_token);
+      setCfgVal('cfg_home_assistant_timeout', cfg.home_assistant_timeout);
+      setCfgVal('cfg_home_assistant_enable_pin', cfg.home_assistant_enable_pin);
+      setCfgVal('cfg_home_assistant_secure_pin', cfg.home_assistant_secure_pin);
+      setCfgVal('cfg_home_assistant_channel_index', cfg.home_assistant_channel_index);
       // Behavior
       setCfgVal('cfg_system_prompt', cfg.system_prompt);
       setCfgVal('cfg_ai_command', cfg.ai_command);
@@ -4477,6 +4489,37 @@ def dashboard():
       setCfgVal('cfg_smtp_user', cfg.smtp_user);
       setCfgVal('cfg_smtp_pass', cfg.smtp_pass);
       setCfgVal('cfg_alert_email_to', cfg.alert_email_to);
+      // Multi-Radio (v0.7.0)
+      setCfgVal('cfg_meshtastic_enabled', cfg.meshtastic_enabled !== false);
+      const _dsn = document.getElementById('cfg_default_send_network');
+      if (_dsn) _dsn.value = cfg.default_send_network || 'auto';
+      setCfgVal('cfg_meshtastic_connect_timeout_sec', cfg.meshtastic_connect_timeout_sec);
+      // MeshCore (v0.7.0)
+      const mc = cfg.meshcore || {};
+      setCfgVal('cfg_mc_enabled', mc.enabled);
+      const _mct = document.getElementById('cfg_mc_connection_type');
+      if (_mct) _mct.value = mc.connection_type || 'serial';
+      setCfgVal('cfg_mc_serial_port', mc.serial_port);
+      setCfgVal('cfg_mc_serial_baud', mc.serial_baud);
+      setCfgVal('cfg_mc_tcp_host', mc.tcp_host);
+      setCfgVal('cfg_mc_tcp_port', mc.tcp_port);
+      setCfgVal('cfg_mc_ble_address', mc.ble_address);
+      setCfgVal('cfg_mc_bridge_enabled', mc.bridge_enabled);
+      setCfgVal('cfg_mc_send_adverts', mc.send_adverts !== false);
+      setCfgVal('cfg_mc_advert_interval_sec', mc.advert_interval_sec);
+      // MCP Server (v0.7.0)
+      const mcp = cfg.mcp || {};
+      setCfgVal('cfg_mcp_enabled', mcp.enabled);
+      setCfgVal('cfg_mcp_require_auth', mcp.require_auth !== false);
+      setCfgVal('cfg_mcp_auth_token', mcp.auth_token);
+      setCfgVal('cfg_mcp_allow_emergency', mcp.allow_emergency);
+      setCfgVal('cfg_mcp_rate_limit_per_min', mcp.rate_limit_per_min);
+      // Firmware (v0.7.0)
+      const fw = cfg.firmware || {};
+      setCfgVal('cfg_fw_auto_check', fw.auto_check !== false);
+      setCfgVal('cfg_fw_check_interval_sec', fw.check_interval_sec);
+      setCfgVal('cfg_fw_allow_flashing', fw.allow_flashing);
+      setCfgVal('cfg_fw_auto_update', fw.auto_update);
     }
     function collectConfigForm() {
       const cfg = Object.assign({}, _loadedConfig);
@@ -4498,6 +4541,18 @@ def dashboard():
         else if (p === 'openai_compatible') { cfg.openai_compatible_url = cfgVal('cfg_openai_compatible_url'); cfg.openai_compatible_api_key = cfgVal('cfg_openai_compatible_api_key'); cfg.openai_compatible_model = cfgVal('cfg_openai_compatible_model'); cfg.openai_compatible_timeout = cfgVal('cfg_openai_compatible_timeout'); }
         else { cfg[p+'_api_key'] = cfgVal('cfg_'+p+'_api_key'); cfg[p+'_model'] = cfgVal('cfg_'+p+'_model'); cfg[p+'_timeout'] = cfgVal('cfg_'+p+'_timeout'); }
       });
+      // Hermes (v0.7.0)
+      cfg.hermes_api_key = cfgVal('cfg_hermes_api_key');
+      cfg.hermes_url = cfgVal('cfg_hermes_url');
+      cfg.hermes_model = cfgVal('cfg_hermes_model');
+      cfg.hermes_timeout = cfgVal('cfg_hermes_timeout');
+      // Home Assistant
+      cfg.home_assistant_url = cfgVal('cfg_home_assistant_url');
+      cfg.home_assistant_token = cfgVal('cfg_home_assistant_token');
+      cfg.home_assistant_timeout = cfgVal('cfg_home_assistant_timeout');
+      cfg.home_assistant_enable_pin = cfgVal('cfg_home_assistant_enable_pin');
+      cfg.home_assistant_secure_pin = cfgVal('cfg_home_assistant_secure_pin');
+      cfg.home_assistant_channel_index = cfgVal('cfg_home_assistant_channel_index');
       cfg.system_prompt = cfgVal('cfg_system_prompt');
       cfg.ai_command = cfgVal('cfg_ai_command');
       cfg.reply_in_channels = cfgVal('cfg_reply_in_channels');
@@ -4529,6 +4584,38 @@ def dashboard():
       cfg.smtp_user = cfgVal('cfg_smtp_user');
       cfg.smtp_pass = cfgVal('cfg_smtp_pass');
       cfg.alert_email_to = cfgVal('cfg_alert_email_to');
+      // Multi-Radio (v0.7.0)
+      cfg.meshtastic_enabled = cfgVal('cfg_meshtastic_enabled');
+      cfg.default_send_network = cfgVal('cfg_default_send_network');
+      cfg.meshtastic_connect_timeout_sec = cfgVal('cfg_meshtastic_connect_timeout_sec');
+      // MeshCore (v0.7.0) — merge to preserve advanced sub-keys (bridge maps, etc.)
+      cfg.meshcore = Object.assign({}, (_loadedConfig && _loadedConfig.meshcore) || {}, {
+        enabled: cfgVal('cfg_mc_enabled'),
+        connection_type: cfgVal('cfg_mc_connection_type'),
+        serial_port: cfgVal('cfg_mc_serial_port'),
+        serial_baud: cfgVal('cfg_mc_serial_baud'),
+        tcp_host: cfgVal('cfg_mc_tcp_host'),
+        tcp_port: cfgVal('cfg_mc_tcp_port'),
+        ble_address: cfgVal('cfg_mc_ble_address'),
+        bridge_enabled: cfgVal('cfg_mc_bridge_enabled'),
+        send_adverts: cfgVal('cfg_mc_send_adverts'),
+        advert_interval_sec: cfgVal('cfg_mc_advert_interval_sec')
+      });
+      // MCP Server (v0.7.0)
+      cfg.mcp = Object.assign({}, (_loadedConfig && _loadedConfig.mcp) || {}, {
+        enabled: cfgVal('cfg_mcp_enabled'),
+        require_auth: cfgVal('cfg_mcp_require_auth'),
+        auth_token: cfgVal('cfg_mcp_auth_token'),
+        allow_emergency: cfgVal('cfg_mcp_allow_emergency'),
+        rate_limit_per_min: cfgVal('cfg_mcp_rate_limit_per_min')
+      });
+      // Firmware (v0.7.0)
+      cfg.firmware = Object.assign({}, (_loadedConfig && _loadedConfig.firmware) || {}, {
+        auto_check: cfgVal('cfg_fw_auto_check'),
+        check_interval_sec: cfgVal('cfg_fw_check_interval_sec'),
+        allow_flashing: cfgVal('cfg_fw_allow_flashing'),
+        auto_update: cfgVal('cfg_fw_auto_update')
+      });
       return cfg;
     }
     async function loadConfigFiles(){
@@ -4584,7 +4671,10 @@ def dashboard():
       channelDiv.innerHTML = "";
       // Track collapsed state per channel
       if (!window._channelCollapsed) window._channelCollapsed = {};
-      Object.keys(groups).sort().forEach(ch => {
+      // Sort channels numerically (so 2 comes before 10). Render each channel in
+      // its own try/catch so one malformed message can never blank the whole panel.
+      Object.keys(groups).sort((a, b) => Number(a) - Number(b)).forEach(ch => {
+       try {
         const name = getChannelName(ch);
         const unreadCount = groups[ch].filter(m => !isChannelMsgRead(m.timestamp, ch)).length;
 
@@ -4604,7 +4694,7 @@ def dashboard():
         headerWrap.appendChild(header);
 
         // v0.7.2: badge the channel with its assigned Channel Agent (if any)
-        const _chAgent = channelAgents[String(ch)];
+        const _chAgent = (channelAgents && typeof channelAgents === 'object') ? channelAgents[String(ch)] : null;
         if (_chAgent) {
           const ab = document.createElement("span");
           ab.style.cssText = "margin-left:8px;font-size:0.72em;font-weight:bold;padding:1px 7px;border-radius:10px;background:#5b2a86;color:#fff;white-space:nowrap;";
@@ -4666,6 +4756,7 @@ def dashboard():
         bodyDiv.className = "channel-group-body" + (window._channelCollapsed[ch] ? " collapsed" : "");
 
         groups[ch].forEach(m => {
+         try {
           if (isChannelMsgRead(m.timestamp, ch)) return;
           const wrap = document.createElement("div");
           wrap.className = "message";
@@ -4714,9 +4805,11 @@ def dashboard():
           wrap.appendChild(picker);
 
           bodyDiv.appendChild(wrap);
+         } catch (err) { console.warn('channel msg render skipped:', err); }
         });
         groupDiv.appendChild(bodyDiv);
         channelDiv.appendChild(groupDiv);
+       } catch (chErr) { console.warn('channel group render skipped for ch ' + ch + ':', chErr); }
       });
 
       // Update global reply targets
@@ -6125,7 +6218,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2.1 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -6248,7 +6341,9 @@ def dashboard():
                   <option value="groq">Groq</option>
                   <option value="deepseek">DeepSeek</option>
                   <option value="mistral">Mistral</option>
+                  <option value="hermes">Hermes (Nous Research)</option>
                   <option value="openai_compatible">OpenAI Compatible</option>
+                  <option value="home_assistant">Home Assistant</option>
                 </select>
               </div>
               <!-- LM Studio -->
@@ -6313,6 +6408,22 @@ def dashboard():
                 <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_mistral_api_key"></div>
                 <div class="cfg-field"><label>Model</label><input type="text" id="cfg_mistral_model" placeholder="mistral-small-latest"></div>
                 <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_mistral_timeout"></div>
+              </div></div>
+              <!-- Hermes (Nous Research) -->
+              <div id="ai_sec_hermes" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_hermes_api_key"></div>
+                <div class="cfg-field full"><label>API URL</label><input type="text" id="cfg_hermes_url" placeholder="https://inference-api.nousresearch.com/v1/chat/completions"></div>
+                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_hermes_model" placeholder="Hermes-4-405B"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_hermes_timeout"></div>
+              </div></div>
+              <!-- Home Assistant (AI provider) -->
+              <div id="ai_sec_home_assistant" class="ai-provider-section"><div class="cfg-section-body">
+                <div class="cfg-field full"><label>Home Assistant URL</label><input type="text" id="cfg_home_assistant_url" placeholder="http://homeassistant.local:8123/api/conversation/process"></div>
+                <div class="cfg-field"><label>Token</label><input type="password" id="cfg_home_assistant_token"></div>
+                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_home_assistant_timeout"></div>
+                <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_home_assistant_enable_pin"><label for="cfg_home_assistant_enable_pin">Require PIN</label></div></div>
+                <div class="cfg-field"><label>Secure PIN</label><input type="password" id="cfg_home_assistant_secure_pin"></div>
+                <div class="cfg-field"><label>Channel Index</label><input type="number" id="cfg_home_assistant_channel_index" placeholder="-1 = off"></div>
               </div></div>
               <!-- OpenAI Compatible -->
               <div id="ai_sec_openai_compatible" class="ai-provider-section"><div class="cfg-section-body">
@@ -6406,6 +6517,69 @@ def dashboard():
               <div class="cfg-field"><label>SMTP User</label><input type="text" id="cfg_smtp_user"></div>
               <div class="cfg-field"><label>SMTP Password</label><input type="password" id="cfg_smtp_pass"></div>
               <div class="cfg-field"><label>Alert Email To</label><input type="text" id="cfg_alert_email_to"></div>
+            </div>
+          </div>
+
+          <!-- Multi-Radio (v0.7.0) -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🛰️ Multi-Radio (v0.7.0)</div>
+            <div class="cfg-section-body">
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_meshtastic_enabled"><label for="cfg_meshtastic_enabled">Meshtastic Enabled</label></div></div>
+              <div class="cfg-field"><label>Default Send Network</label>
+                <select id="cfg_default_send_network">
+                  <option value="auto">Auto (active radios)</option>
+                  <option value="meshtastic">Meshtastic</option>
+                  <option value="meshcore">MeshCore</option>
+                  <option value="both">Both networks</option>
+                </select>
+              </div>
+              <div class="cfg-field"><label>Meshtastic Connect Timeout (sec)</label><input type="number" id="cfg_meshtastic_connect_timeout_sec" placeholder="30"></div>
+            </div>
+          </div>
+
+          <!-- MeshCore (v0.7.0) -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr collapsed" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🟣 MeshCore Radio (v0.7.0)</div>
+            <div class="cfg-section-body hidden">
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_enabled"><label for="cfg_mc_enabled">Enable MeshCore</label></div></div>
+              <div class="cfg-field"><label>Connection Type</label>
+                <select id="cfg_mc_connection_type">
+                  <option value="serial">Serial</option>
+                  <option value="tcp">TCP</option>
+                  <option value="ble">BLE (Bluetooth)</option>
+                </select>
+              </div>
+              <div class="cfg-field"><label>Serial Port</label><input type="text" id="cfg_mc_serial_port" placeholder="/dev/ttyUSB1"></div>
+              <div class="cfg-field"><label>Serial Baud</label><input type="number" id="cfg_mc_serial_baud" placeholder="115200"></div>
+              <div class="cfg-field"><label>TCP Host</label><input type="text" id="cfg_mc_tcp_host" placeholder="192.168.1.100"></div>
+              <div class="cfg-field"><label>TCP Port</label><input type="number" id="cfg_mc_tcp_port" placeholder="5000"></div>
+              <div class="cfg-field"><label>BLE Address</label><input type="text" id="cfg_mc_ble_address"></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_bridge_enabled"><label for="cfg_mc_bridge_enabled">Bridge Chat to Meshtastic</label></div></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_send_adverts"><label for="cfg_mc_send_adverts">Send Adverts (DM discovery)</label></div></div>
+              <div class="cfg-field"><label>Advert Interval (sec)</label><input type="number" id="cfg_mc_advert_interval_sec" placeholder="1800"></div>
+            </div>
+          </div>
+
+          <!-- MCP Server (v0.7.0) -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr collapsed" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🔌 MCP Server (v0.7.0)</div>
+            <div class="cfg-section-body hidden">
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_enabled"><label for="cfg_mcp_enabled">Enable MCP Server</label></div></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_require_auth"><label for="cfg_mcp_require_auth">Require Auth (bearer token)</label></div></div>
+              <div class="cfg-field full"><label>Auth Token (blank = auto-generate)</label><input type="password" id="cfg_mcp_auth_token"></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_allow_emergency"><label for="cfg_mcp_allow_emergency">Allow Emergency Tool</label></div></div>
+              <div class="cfg-field"><label>Rate Limit (per min)</label><input type="number" id="cfg_mcp_rate_limit_per_min" placeholder="120"></div>
+            </div>
+          </div>
+
+          <!-- Firmware Updates (v0.7.0) -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr collapsed" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🔄 Firmware &amp; Updates (v0.7.0)</div>
+            <div class="cfg-section-body hidden">
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_auto_check"><label for="cfg_fw_auto_check">Auto-Check for Updates</label></div></div>
+              <div class="cfg-field"><label>Check Interval (sec)</label><input type="number" id="cfg_fw_check_interval_sec" placeholder="86400"></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_allow_flashing"><label for="cfg_fw_allow_flashing">Allow Flashing (ESP32)</label></div></div>
+              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_auto_update"><label for="cfg_fw_auto_update">Auto-Update (unattended)</label></div></div>
             </div>
           </div>
         </div>
@@ -6657,7 +6831,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2.1 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>
