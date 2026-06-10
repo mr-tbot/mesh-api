@@ -190,7 +190,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.2.5 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.3 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -2325,6 +2325,127 @@ def api_channel_agents_save():
         return jsonify({"status": "ok", "channel_agents": cleaned})
     except Exception as e:
         return jsonify({"message": str(e)}), 500
+
+
+@app.route("/api/channel_bridge", methods=["GET"])
+def api_channel_bridge():
+    """Cross-network channel bridge config for the web UI editor.
+
+    Returns the current Meshtastic<->MeshCore channel maps and tags, plus the
+    channel names/lists for both networks and whether both radios are active so
+    the UI can present a friendly mapping editor.
+    """
+    cfg = MESHCORE_CONFIG if isinstance(MESHCORE_CONFIG, dict) else {}
+    mt_to_mc = cfg.get("bridge_meshtastic_channel_to_meshcore_channel", {}) or {}
+    mc_to_mt = cfg.get("bridge_meshcore_channel_to_meshtastic_channel", {}) or {}
+    # Build a unified, de-duplicated list of links the UI can render. A link is
+    # bidirectional when both maps agree on the pairing, else one-directional.
+    links = {}
+    for mt, mc in mt_to_mc.items():
+        key = (str(mt), str(mc))
+        links.setdefault(key, {"mt": int(mt), "mc": int(mc), "mt_to_mc": False, "mc_to_mt": False})
+        links[key]["mt_to_mc"] = True
+    for mc, mt in mc_to_mt.items():
+        key = (str(mt), str(mc))
+        links.setdefault(key, {"mt": int(mt), "mc": int(mc), "mt_to_mc": False, "mc_to_mt": False})
+        links[key]["mc_to_mt"] = True
+    link_list = []
+    for v in links.values():
+        if v["mt_to_mc"] and v["mc_to_mt"]:
+            d = "both"
+        elif v["mt_to_mc"]:
+            d = "mt_to_mc"
+        else:
+            d = "mc_to_mt"
+        link_list.append({"mt": v["mt"], "mc": v["mc"], "dir": d})
+    link_list.sort(key=lambda x: (x["mt"], x["mc"]))
+    # MeshCore channels (best-effort; empty if radio not connected)
+    mc_channels = []
+    if meshcore_manager is not None:
+        try:
+            mc_channels = meshcore_manager.get_channels()
+        except Exception:
+            mc_channels = []
+    mt_active = MESHTASTIC_ENABLED and interface is not None
+    mc_active = meshcore_manager is not None and getattr(meshcore_manager, "is_connected", False)
+    return jsonify({
+        "enabled": bool(cfg.get("bridge_enabled", False)),
+        "bridge_direct_messages": bool(cfg.get("bridge_direct_messages", False)),
+        "links": link_list,
+        "tag_mc": cfg.get("meshcore_to_meshtastic_tag", "[MC]"),
+        "tag_mt": cfg.get("meshtastic_to_meshcore_tag", "[MT]"),
+        "mt_channel_names": config.get("channel_names", {}) or {},
+        "mc_channels": mc_channels,
+        "meshtastic_active": bool(mt_active),
+        "meshcore_active": bool(mc_active),
+        "both_active": bool(mt_active and mc_active),
+    })
+
+
+@app.route("/api/channel_bridge", methods=["POST", "PUT"])
+def api_channel_bridge_save():
+    """Persist the cross-network channel bridge config and apply it live.
+
+    Rebuilds the two directional channel maps from the UI's link list, writes
+    them (plus enabled flag + tags) into the ``meshcore`` block of config.json
+    (preserving every other key), and updates the in-memory ``MESHCORE_CONFIG``
+    so ``bridge_to_other_network`` picks up the change on the next message.
+    """
+    global MESHCORE_CONFIG
+    try:
+        data = request.get_json(force=True) or {}
+        links = data.get("links", [])
+        if not isinstance(links, list):
+            return jsonify({"message": "links must be a list"}), 400
+        mt_to_mc = {}
+        mc_to_mt = {}
+        for ln in links:
+            if not isinstance(ln, dict):
+                continue
+            try:
+                mt = int(ln.get("mt"))
+                mc = int(ln.get("mc"))
+            except (TypeError, ValueError):
+                continue
+            d = (ln.get("dir") or "both").lower()
+            if d in ("both", "mt_to_mc"):
+                mt_to_mc[str(mt)] = mc
+            if d in ("both", "mc_to_mt"):
+                mc_to_mt[str(mc)] = mt
+        # Read on-disk config; update only the meshcore bridge keys.
+        on_disk = safe_load_json(CONFIG_FILE, {})
+        if not isinstance(on_disk, dict):
+            on_disk = {}
+        mc_block = on_disk.get("meshcore")
+        if not isinstance(mc_block, dict):
+            mc_block = {}
+        mc_block["bridge_enabled"] = bool(data.get("enabled", False))
+        mc_block["bridge_meshtastic_channel_to_meshcore_channel"] = mt_to_mc
+        mc_block["bridge_meshcore_channel_to_meshtastic_channel"] = mc_to_mt
+        if "tag_mt" in data:
+            mc_block["meshtastic_to_meshcore_tag"] = str(data.get("tag_mt") or "[MT]")
+        if "tag_mc" in data:
+            mc_block["meshcore_to_meshtastic_tag"] = str(data.get("tag_mc") or "[MC]")
+        if "bridge_direct_messages" in data:
+            mc_block["bridge_direct_messages"] = bool(data.get("bridge_direct_messages"))
+        on_disk["meshcore"] = mc_block
+        _atomic_write_json(CONFIG_FILE, on_disk)
+        # Apply live: mutate the in-memory MeshCore config the bridge reads.
+        MESHCORE_CONFIG.update({
+            "bridge_enabled": mc_block["bridge_enabled"],
+            "bridge_meshtastic_channel_to_meshcore_channel": mt_to_mc,
+            "bridge_meshcore_channel_to_meshtastic_channel": mc_to_mt,
+            "meshtastic_to_meshcore_tag": mc_block.get("meshtastic_to_meshcore_tag", "[MT]"),
+            "meshcore_to_meshtastic_tag": mc_block.get("meshcore_to_meshtastic_tag", "[MC]"),
+        })
+        if "bridge_direct_messages" in data:
+            MESHCORE_CONFIG["bridge_direct_messages"] = mc_block["bridge_direct_messages"]
+        config["meshcore"] = mc_block
+        add_script_log(f"[WebUI] channel bridge updated ({len(mt_to_mc)} MT→MC, {len(mc_to_mt)} MC→MT).")
+        return jsonify({"status": "ok", "links_mt_to_mc": mt_to_mc, "links_mc_to_mt": mc_to_mt})
+    except Exception as e:
+        return jsonify({"message": str(e)}), 500
+
 
 
 # -----------------------------
@@ -4563,6 +4684,146 @@ def dashboard():
       } catch (e) { alert('Error saving: ' + e.message); }
     }
 
+    // --- v0.7.3: Cross-network Channel Bridge (Meshtastic <-> MeshCore) ---
+    let channelBridge = { enabled: false, links: [], tag_mt: '[MT]', tag_mc: '[MC]',
+                          mt_channel_names: {}, mc_channels: [], both_active: false,
+                          meshtastic_active: false, meshcore_active: false };
+
+    async function refreshChannelBridge() {
+      try {
+        const r = await fetch('/api/channel_bridge');
+        const d = await r.json();
+        channelBridge = Object.assign(channelBridge, d);
+        // Show the toolbar Bridge button only when both radios are in play.
+        const btn = document.getElementById('bridgeBtn');
+        if (btn) btn.style.display = (d.meshcore_active || d.meshtastic_active) ? '' : 'none';
+        const modal = document.getElementById('channelBridgeModal');
+        if (modal && modal.style.display === 'flex') renderChannelBridgeEditor();
+      } catch (e) { /* non-fatal */ }
+    }
+
+    function openChannelBridgeModal() {
+      document.getElementById('channelBridgeModal').style.display = 'flex';
+      renderChannelBridgeEditor();
+      refreshChannelBridge();
+    }
+    function closeChannelBridgeModal() {
+      document.getElementById('channelBridgeModal').style.display = 'none';
+    }
+
+    function _mtChannelLabel(idx) {
+      const names = channelBridge.mt_channel_names || {};
+      return names[String(idx)] || ('Channel ' + idx);
+    }
+    function _mcChannelLabel(idx) {
+      const chs = channelBridge.mc_channels || [];
+      const hit = chs.find(c => String(c.index) === String(idx) || String(c.channel_idx) === String(idx));
+      if (hit && (hit.name || hit.channel_name)) return (hit.name || hit.channel_name);
+      return 'Channel ' + idx;
+    }
+
+    function _bridgeRow(link) {
+      const row = document.createElement('div');
+      row.className = 'br-row';
+      row.style.cssText = 'display:flex;align-items:center;gap:14px;padding:8px 12px;border-bottom:1px solid #333;flex-wrap:wrap;';
+      // Meshtastic channel number
+      const mtWrap = document.createElement('span');
+      mtWrap.style.cssText = 'flex:1;min-width:120px;display:flex;align-items:center;gap:6px;';
+      const mtIn = document.createElement('input');
+      mtIn.type = 'number'; mtIn.min = '0'; mtIn.max = '255'; mtIn.className = 'br-mt';
+      mtIn.value = (link && link.mt != null) ? link.mt : 0;
+      mtIn.style.cssText = 'width:64px;background:#222;color:#7ec3ff;border:1px solid #555;border-radius:4px;padding:4px 6px;';
+      const mtLbl = document.createElement('span');
+      mtLbl.className = 'br-mt-lbl';
+      mtLbl.style.cssText = 'font-size:0.8em;color:#9cf;';
+      mtLbl.textContent = _mtChannelLabel(mtIn.value);
+      mtIn.addEventListener('input', () => { mtLbl.textContent = _mtChannelLabel(mtIn.value); });
+      mtWrap.appendChild(mtIn); mtWrap.appendChild(mtLbl);
+      // Direction
+      const dirSel = document.createElement('select');
+      dirSel.className = 'br-dir';
+      dirSel.style.cssText = 'min-width:120px;background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;';
+      [['both', '⇄ Both'], ['mt_to_mc', '→ MT to MC'], ['mc_to_mt', '← MC to MT']].forEach(([v, t]) => {
+        const o = document.createElement('option'); o.value = v; o.textContent = t;
+        if (link && link.dir === v) o.selected = true;
+        dirSel.appendChild(o);
+      });
+      // MeshCore channel number
+      const mcWrap = document.createElement('span');
+      mcWrap.style.cssText = 'flex:1;min-width:120px;display:flex;align-items:center;gap:6px;';
+      const mcIn = document.createElement('input');
+      mcIn.type = 'number'; mcIn.min = '0'; mcIn.max = '255'; mcIn.className = 'br-mc';
+      mcIn.value = (link && link.mc != null) ? link.mc : 0;
+      mcIn.style.cssText = 'width:64px;background:#222;color:#c5a3ff;border:1px solid #555;border-radius:4px;padding:4px 6px;';
+      const mcLbl = document.createElement('span');
+      mcLbl.className = 'br-mc-lbl';
+      mcLbl.style.cssText = 'font-size:0.8em;color:#c5a3ff;';
+      mcLbl.textContent = _mcChannelLabel(mcIn.value);
+      mcIn.addEventListener('input', () => { mcLbl.textContent = _mcChannelLabel(mcIn.value); });
+      mcWrap.appendChild(mcIn); mcWrap.appendChild(mcLbl);
+      // Remove
+      const del = document.createElement('button');
+      del.textContent = '✕'; del.title = 'Remove link';
+      del.style.cssText = 'width:30px;background:none;border:1px solid #844;color:#f88;border-radius:4px;cursor:pointer;';
+      del.addEventListener('click', () => row.remove());
+      row.appendChild(mtWrap); row.appendChild(dirSel); row.appendChild(mcWrap); row.appendChild(del);
+      return row;
+    }
+
+    function addBridgeLinkRow(link) {
+      const body = document.getElementById('bridgeLinksBody');
+      if (body) body.appendChild(_bridgeRow(link || { mt: 0, mc: 0, dir: 'both' }));
+    }
+
+    function renderChannelBridgeEditor() {
+      const body = document.getElementById('bridgeLinksBody');
+      if (!body) return;
+      document.getElementById('bridgeEnabled').checked = !!channelBridge.enabled;
+      document.getElementById('bridgeTagMt').value = channelBridge.tag_mt || '[MT]';
+      document.getElementById('bridgeTagMc').value = channelBridge.tag_mc || '[MC]';
+      const note = document.getElementById('bridgeStatusNote');
+      if (note) {
+        if (channelBridge.both_active) {
+          note.innerHTML = '<span style="color:#5dd55d;">● Both radios connected — bridging is active.</span>';
+        } else {
+          const parts = [];
+          parts.push('📡 Meshtastic ' + (channelBridge.meshtastic_active ? '🟢' : '🔴'));
+          parts.push('🟣 MeshCore ' + (channelBridge.meshcore_active ? '🟢' : '🔴'));
+          note.innerHTML = '<span style="color:#e0a030;">⚠ Bridging needs BOTH radios connected. Current: ' + parts.join(' · ') + '. Settings still save.</span>';
+        }
+      }
+      body.innerHTML = '';
+      const links = (channelBridge.links && channelBridge.links.length) ? channelBridge.links : [{ mt: 0, mc: 0, dir: 'both' }];
+      links.forEach(l => body.appendChild(_bridgeRow(l)));
+    }
+
+    async function saveChannelBridge() {
+      const links = [];
+      document.querySelectorAll('#bridgeLinksBody .br-row').forEach(row => {
+        const mt = parseInt(row.querySelector('.br-mt').value, 10);
+        const mc = parseInt(row.querySelector('.br-mc').value, 10);
+        const dir = row.querySelector('.br-dir').value;
+        if (!isNaN(mt) && !isNaN(mc)) links.push({ mt, mc, dir });
+      });
+      const payload = {
+        enabled: document.getElementById('bridgeEnabled').checked,
+        links,
+        tag_mt: document.getElementById('bridgeTagMt').value || '[MT]',
+        tag_mc: document.getElementById('bridgeTagMc').value || '[MC]'
+      };
+      try {
+        const r = await fetch('/api/channel_bridge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.message || 'Save failed');
+        alert('Channel bridge saved and applied live.');
+        refreshChannelBridge();
+      } catch (e) { alert('Error saving: ' + e.message); }
+    }
+
     // Data fetch & UI updates
     let CHANNEL_NAMES = """ + json.dumps(channel_names) + """;
     // Override with UI-renamed channels from settings
@@ -5931,6 +6192,10 @@ def dashboard():
     setTimeout(refreshChannelAgents, 1800);
     setInterval(refreshChannelAgents, 30000);
 
+    // v0.7.3: show/refresh the cross-network Channel Bridge button + state
+    setTimeout(refreshChannelBridge, 2200);
+    setInterval(refreshChannelBridge, 30000);
+
     // v0.7.2.2: real-time mesh traffic monitor (green->red activity graph)
     function drawTraffic(d) {
       const canvas = document.getElementById('trafficCanvas');
@@ -6620,6 +6885,7 @@ def dashboard():
       <button type="button" onclick="openCommandsModal()">⌘ Commands</button>
       <button type="button" onclick="openExtensionsModal()">🧩 Extensions</button>
       <button type="button" onclick="openChannelAgentsModal()" title="Assign AI providers or extensions to specific channels">🤖 Agents</button>
+      <button type="button" id="bridgeBtn" onclick="openChannelBridgeModal()" title="Bridge channels between Meshtastic and MeshCore" style="display:none;">🌉 Bridge</button>
       <button type="button" onclick="openConfigModal()">⚙️ Config</button>
       <button type="button" id="updatesBtn" onclick="openUpdatesModal()" title="Check for Mesh-API / Meshtastic / MeshCore updates">🔄 Updates<span id="updatesBadge" style="display:none;margin-left:5px;background:#e53935;color:#fff;border-radius:10px;padding:0 7px;font-size:0.8em;font-weight:bold;"></span></button>
       <a href="/logs" target="_blank">📜 Logs</a>
@@ -6802,7 +7068,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2.5 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.3 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -7253,6 +7519,48 @@ def dashboard():
     </div>
   </div>
 
+  <div id="channelBridgeModal" class="modal-overlay" onclick="if(event.target===this) closeChannelBridgeModal()">
+    <div class="modal-content" style="max-width:820px;">
+      <div class="modal-header">
+        <h3>🌉 Channel Bridge (Meshtastic ⇄ MeshCore)</h3>
+        <button class="modal-close" onclick="closeChannelBridgeModal()">Close</button>
+      </div>
+      <div class="modal-body">
+        <div style="color:#bbb; font-size:0.9em; margin-bottom:10px;">
+          When both radios are connected, chat messages on a linked channel are mirrored to the other network
+          (tagged with the sender's name). Slash commands and AI replies are never bridged. Changes apply
+          <strong>live</strong> — no restart needed.
+        </div>
+        <div id="bridgeStatusNote" style="margin-bottom:10px; font-size:0.85em;"></div>
+        <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+          <label style="color:#ccc; font-size:0.9em; white-space:nowrap;"><input type="checkbox" id="bridgeEnabled"> 🌉 Bridge enabled</label>
+          <span style="color:#888; font-size:0.85em;">MT tag</span>
+          <input type="text" id="bridgeTagMt" placeholder="[MT]" style="width:70px;background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:3px 6px;">
+          <span style="color:#888; font-size:0.85em;">MC tag</span>
+          <input type="text" id="bridgeTagMc" placeholder="[MC]" style="width:70px;background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:3px 6px;">
+        </div>
+        <div style="border:1px solid var(--theme-color); border-radius:8px; overflow:hidden;">
+          <div style="background:#222; padding:8px 12px; border-bottom:1px solid var(--theme-color); display:flex; gap:14px; font-weight:bold; color:var(--theme-color); font-size:0.9em;">
+            <span style="flex:1;">📡 Meshtastic Channel</span>
+            <span style="min-width:120px;">Direction</span>
+            <span style="flex:1;">🟣 MeshCore Channel</span>
+            <span style="width:30px;"></span>
+          </div>
+          <div id="bridgeLinksBody" style="max-height:42vh; overflow:auto;"></div>
+        </div>
+        <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <button class="reply-btn" onclick="addBridgeLinkRow()">+ Add Link</button>
+          <button class="reply-btn" onclick="refreshChannelBridge()">Refresh</button>
+          <button class="mark-read-btn" onclick="saveChannelBridge()">Save &amp; Apply</button>
+        </div>
+        <div style="margin-top:8px; color:#888; font-size:0.82em;">
+          "Both" mirrors in both directions. Channel numbers are the per-device channel <em>indexes</em>
+          (they can differ between the two radios). The default link is Meshtastic 0 ⇄ MeshCore 0.
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="emergencyModal" class="modal-overlay" onclick="if(event.target===this) closeEmergencyModal()">
     <div class="modal-content" style="max-width:760px; border:3px solid #ff5252;">
       <div class="modal-header" style="background:#b00000;">
@@ -7442,7 +7750,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2.5 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.3 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>

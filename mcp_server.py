@@ -44,7 +44,7 @@ from typing import Any, Callable, Optional
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = {"2025-06-18", "2025-03-26", "2024-11-05"}
 SERVER_NAME = "mesh-api"
-SERVER_VERSION = "0.7.2.5"
+SERVER_VERSION = "0.7.3"
 
 # JSON-RPC error codes
 PARSE_ERROR = -32700
