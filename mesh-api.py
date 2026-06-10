@@ -190,7 +190,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.3 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.3.1 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -411,6 +411,29 @@ def available_ai_providers():
             if name and name not in provs:
                 provs.append(name)
     return provs
+
+
+# v0.7.3.1: Named AI endpoints. Lets you define multiple distinct AI targets
+# (each with its own name, type, URL, key, and model) and point different
+# channels at different ones via Channel Agents — e.g. two OpenAI-compatible
+# endpoints going to two different agents. Shape:
+#   { "<name>": {"type": "openai_compatible", "api_key": "...", "url": "...",
+#                "model": "...", "timeout": 60} }
+AI_ENDPOINTS = config.get("ai_endpoints", {}) or {}
+# Default base URLs per type for the OpenAI-compatible family (used when an
+# endpoint leaves "url" blank). All of these speak the OpenAI chat/completions
+# API shape, so a single helper drives them.
+AI_ENDPOINT_TYPE_URLS = {
+    "openai": "https://api.openai.com/v1/chat/completions",
+    "openai_compatible": "",
+    "hermes": "https://inference-api.nousresearch.com/v1/chat/completions",
+    "grok": "https://api.x.ai/v1/chat/completions",
+    "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+    "groq": "https://api.groq.com/openai/v1/chat/completions",
+    "deepseek": "https://api.deepseek.com/v1/chat/completions",
+    "mistral": "https://api.mistral.ai/v1/chat/completions",
+    "lmstudio": "http://localhost:1234/v1/chat/completions",
+}
 MAX_CHUNK_SIZE = config.get("chunk_size", 200)
 MAX_CHUNKS = int(config.get("max_ai_chunks", 5))
 CHUNK_DELAY = config.get("chunk_delay", 10)
@@ -720,8 +743,32 @@ def extensions_toggle(slug):
     # WebUI) reflect the new enabled flag immediately, without a restart.
     if extension_loader and slug in extension_loader.available:
       extension_loader.available[slug]["enabled"] = new_state
+    # v0.7.3.1: actually load/unload the extension live so the change takes
+    # effect immediately — previously disabling a *running* extension only
+    # flipped the on-disk flag, leaving it active (and the status dot green)
+    # until a manual reload/restart, so the button appeared to do nothing.
+    applied_live = False
+    if extension_loader:
+      try:
+        if new_state and slug not in extension_loader.loaded:
+          ext_dir = os.path.join(os.path.abspath(EXTENSIONS_PATH), slug)
+          extension_loader._load_extension(slug, ext_dir)
+          applied_live = slug in extension_loader.loaded
+        elif (not new_state) and slug in extension_loader.loaded:
+          inst = extension_loader.loaded.pop(slug)
+          try:
+            inst.on_unload()
+          except Exception as ue:
+            dprint(f"on_unload error for {slug}: {ue}")
+          for cmd in list(extension_loader.command_registry.keys()):
+            if extension_loader.command_registry.get(cmd) is inst:
+              del extension_loader.command_registry[cmd]
+          applied_live = slug not in extension_loader.loaded
+      except Exception as le:
+        dprint(f"live toggle load/unload error for {slug}: {le}")
+    note = "Applied live." if applied_live else "Reload or restart to apply."
     add_script_log(f"[WebUI] Extension '{slug}' {'enabled' if new_state else 'disabled'}.")
-    return jsonify({"status": "ok", "enabled": new_state, "note": "Reload or restart to apply."})
+    return jsonify({"status": "ok", "enabled": new_state, "loaded": bool(extension_loader and slug in extension_loader.loaded), "applied_live": applied_live, "note": note})
   except Exception as e:
     return jsonify({"message": str(e)}), 500
 
@@ -1304,9 +1351,33 @@ def send_to_home_assistant(user_message):
         print(f"⚠️ HA request failed: {e}")
         return None
 
-def get_ai_response(prompt, provider=None):
+def send_to_named_endpoint(name, prompt):
+    """Route a prompt to a user-defined named AI endpoint (see AI_ENDPOINTS).
+
+    Named endpoints all speak the OpenAI-compatible chat/completions API, so a
+    single helper drives any of them with the endpoint's own URL/key/model.
+    """
+    ep = AI_ENDPOINTS.get(name) if isinstance(AI_ENDPOINTS, dict) else None
+    if not isinstance(ep, dict):
+        print(f"⚠️ Unknown AI endpoint: {name}")
+        return None
+    ep_type = (ep.get("type") or "openai_compatible").lower()
+    url = (ep.get("url") or "").strip() or AI_ENDPOINT_TYPE_URLS.get(ep_type, "")
+    if not url:
+        print(f"⚠️ AI endpoint '{name}' has no URL (type '{ep_type}').")
+        return None
+    api_key = ep.get("api_key", "")
+    model = ep.get("model", "")
+    timeout = int(ep.get("timeout", 60) or 60)
+    return _send_to_openai_compatible(prompt, f"endpoint:{name}", api_key, url, model, timeout)
+
+
+def get_ai_response(prompt, provider=None, endpoint=None):
     """Get an AI response. ``provider`` overrides the global AI_PROVIDER so a
-    channel agent can pin a specific provider (e.g. hermes) per channel."""
+    channel agent can pin a specific provider (e.g. hermes) per channel.
+    ``endpoint`` routes to a user-defined named AI endpoint instead (v0.7.3.1)."""
+    if endpoint:
+        return send_to_named_endpoint(endpoint, prompt)
     prov = (provider or AI_PROVIDER or "").lower()
     if prov == "lmstudio":
         return send_to_lmstudio(prompt)
@@ -1504,6 +1575,11 @@ def route_channel_agent(text, channel_idx, sender_id):
     agent = (spec.get("agent") or "ai").lower()
 
     if agent == "ai":
+        ep_name = spec.get("endpoint")
+        if ep_name:
+            info_print(f"[ChannelAgent] ch{channel_idx} → AI endpoint '{ep_name}'")
+            resp = get_ai_response(text, endpoint=ep_name)
+            return resp if resp else "🤖 [No response]"
         provider = spec.get("provider") or AI_PROVIDER
         info_print(f"[ChannelAgent] ch{channel_idx} → AI provider '{provider}'")
         resp = get_ai_response(text, provider=provider)
@@ -2252,7 +2328,7 @@ def api_channel_agents():
     for ch, spec in agents.items():
         if isinstance(spec, dict):
             out[str(ch)] = {k: v for k, v in spec.items()
-                            if k in ("agent", "provider", "slug", "command", "require_pin", "enabled")}
+                            if k in ("agent", "provider", "endpoint", "slug", "command", "require_pin", "enabled")}
     if HOME_ASSISTANT_ENABLED and HOME_ASSISTANT_CHANNEL_INDEX >= 0 \
             and str(HOME_ASSISTANT_CHANNEL_INDEX) not in out:
         out[str(HOME_ASSISTANT_CHANNEL_INDEX)] = {
@@ -2269,6 +2345,7 @@ def api_channel_agents():
         "channel_agents": out,
         "providers": available_ai_providers(),
         "current_provider": AI_PROVIDER,
+        "endpoints": sorted(list(AI_ENDPOINTS.keys())) if isinstance(AI_ENDPOINTS, dict) else [],
         "extensions": sorted(ext_list, key=lambda e: e["name"].lower()),
         "channel_names": config.get("channel_names", {}) or {},
     })
@@ -2296,10 +2373,14 @@ def api_channel_agents_save():
                 continue
             entry = {"agent": agent}
             if agent == "ai":
-                prov = (spec.get("provider") or "").lower()
-                if prov not in available_ai_providers():
-                    continue
-                entry["provider"] = prov
+                ep_name = str(spec.get("endpoint") or "").strip()
+                if ep_name and isinstance(AI_ENDPOINTS, dict) and ep_name in AI_ENDPOINTS:
+                    entry["endpoint"] = ep_name
+                else:
+                    prov = (spec.get("provider") or "").lower()
+                    if prov not in available_ai_providers():
+                        continue
+                    entry["provider"] = prov
             else:
                 slug = str(spec.get("slug") or "").strip()
                 if not slug:
@@ -2323,6 +2404,89 @@ def api_channel_agents_save():
         config["channel_agents"] = cleaned
         add_script_log(f"[WebUI] channel_agents updated ({len(cleaned)} assignment(s)).")
         return jsonify({"status": "ok", "channel_agents": cleaned})
+    except Exception as e:
+        return jsonify({"message": str(e)}), 500
+
+
+# v0.7.3.1: named AI endpoints (multiple distinct AI targets, each with its own
+# name + type + URL/key/model) selectable per channel via Channel Agents.
+AI_ENDPOINT_TYPES = (
+    "openai_compatible", "openai", "hermes", "grok", "openrouter",
+    "groq", "deepseek", "mistral", "lmstudio",
+)
+
+@app.route("/api/ai_endpoints", methods=["GET"])
+def api_ai_endpoints():
+    """Return the named AI endpoints (with API keys masked) + type metadata."""
+    eps = {}
+    src = AI_ENDPOINTS if isinstance(AI_ENDPOINTS, dict) else {}
+    for name, ep in src.items():
+        if not isinstance(ep, dict):
+            continue
+        eps[name] = {
+            "type": ep.get("type", "openai_compatible"),
+            "url": ep.get("url", ""),
+            "model": ep.get("model", ""),
+            "timeout": ep.get("timeout", 60),
+            "has_key": bool(ep.get("api_key")),
+        }
+    return jsonify({
+        "endpoints": eps,
+        "types": list(AI_ENDPOINT_TYPES),
+        "type_urls": AI_ENDPOINT_TYPE_URLS,
+    })
+
+@app.route("/api/ai_endpoints", methods=["POST", "PUT"])
+def api_ai_endpoints_save():
+    """Persist named AI endpoints and apply them live.
+
+    Each endpoint is ``{type, url, api_key, model, timeout}``. An empty/omitted
+    ``api_key`` for an existing endpoint keeps the stored key (so the masked UI
+    doesn't wipe it). Writes only the ``ai_endpoints`` block of config.json.
+    """
+    global AI_ENDPOINTS
+    try:
+        data = request.get_json(force=True) or {}
+        incoming = data.get("endpoints", data)
+        if not isinstance(incoming, dict):
+            return jsonify({"message": "endpoints must be a JSON object"}), 400
+        existing = AI_ENDPOINTS if isinstance(AI_ENDPOINTS, dict) else {}
+        cleaned = {}
+        for name, ep in incoming.items():
+            nm = str(name).strip()
+            if not nm or not isinstance(ep, dict):
+                continue
+            ep_type = (ep.get("type") or "openai_compatible").lower()
+            if ep_type not in AI_ENDPOINT_TYPES:
+                ep_type = "openai_compatible"
+            entry = {
+                "type": ep_type,
+                "url": str(ep.get("url") or "").strip(),
+                "model": str(ep.get("model") or "").strip(),
+                "timeout": int(ep.get("timeout") or 60),
+            }
+            # Preserve an existing key when the UI sends a blank (masked) value.
+            new_key = ep.get("api_key")
+            if new_key:
+                entry["api_key"] = new_key
+            elif nm in existing and existing[nm].get("api_key"):
+                entry["api_key"] = existing[nm]["api_key"]
+            else:
+                entry["api_key"] = ""
+            cleaned[nm] = entry
+        on_disk = safe_load_json(CONFIG_FILE, {})
+        if not isinstance(on_disk, dict):
+            on_disk = {}
+        on_disk["ai_endpoints"] = cleaned
+        _atomic_write_json(CONFIG_FILE, on_disk)
+        AI_ENDPOINTS = cleaned
+        config["ai_endpoints"] = cleaned
+        add_script_log(f"[WebUI] ai_endpoints updated ({len(cleaned)} endpoint(s)).")
+        # Return masked view.
+        masked = {n: {"type": e["type"], "url": e["url"], "model": e["model"],
+                      "timeout": e["timeout"], "has_key": bool(e.get("api_key"))}
+                  for n, e in cleaned.items()}
+        return jsonify({"status": "ok", "endpoints": masked})
     except Exception as e:
         return jsonify({"message": str(e)}), 500
 
@@ -4577,7 +4741,7 @@ def dashboard():
 
     // --- v0.7.2: Channel Agents (per-channel AI provider / extension routing) ---
     let channelAgents = {};
-    let channelAgentMeta = { providers: [], extensions: [], channel_names: {}, current_provider: '' };
+    let channelAgentMeta = { providers: [], endpoints: [], extensions: [], channel_names: {}, current_provider: '' };
 
     async function refreshChannelAgents() {
       try {
@@ -4586,6 +4750,7 @@ def dashboard():
         channelAgents = d.channel_agents || {};
         channelAgentMeta = {
           providers: d.providers || [],
+          endpoints: d.endpoints || [],
           extensions: d.extensions || [],
           channel_names: d.channel_names || {},
           current_provider: d.current_provider || ''
@@ -4599,6 +4764,7 @@ def dashboard():
       document.getElementById('channelAgentsModal').style.display = 'flex';
       renderChannelAgentsEditor();
       refreshChannelAgents();
+      refreshAiEndpoints();
     }
     function closeChannelAgentsModal() {
       document.getElementById('channelAgentsModal').style.display = 'none';
@@ -4616,6 +4782,7 @@ def dashboard():
       const body = document.getElementById('channelAgentsBody');
       if (!body) return;
       const provs = channelAgentMeta.providers || [];
+      const endpoints = channelAgentMeta.endpoints || [];
       const exts = channelAgentMeta.extensions || [];
       const names = channelAgentMeta.channel_names || {};
       let html = '';
@@ -4624,9 +4791,15 @@ def dashboard():
         const type = a ? (a.agent || 'ai') : 'none';
         const legacy = a && a.legacy;
         const chName = names[ch] || ('Channel ' + ch);
-        const provOpts = provs.map(p =>
-          '<option value="' + p + '"' + (a && type === 'ai' && a.provider === p ? ' selected' : '') + '>' + p + '</option>'
+        // Built-in providers, then any named AI endpoints (value "endpoint:<name>").
+        let provOpts = provs.map(p =>
+          '<option value="' + p + '"' + (a && type === 'ai' && !a.endpoint && a.provider === p ? ' selected' : '') + '>' + p + '</option>'
         ).join('');
+        if (endpoints.length) {
+          provOpts += '<optgroup label="Named Endpoints">' + endpoints.map(n =>
+            '<option value="endpoint:' + n + '"' + (a && type === 'ai' && a.endpoint === n ? ' selected' : '') + '>🔌 ' + n + '</option>'
+          ).join('') + '</optgroup>';
+        }
         const extOpts = exts.length
           ? exts.map(e => '<option value="' + e.slug + '"' + (a && type === 'extension' && a.slug === e.slug ? ' selected' : '') + '>' + e.name + ' (' + e.slug + ')</option>').join('')
           : '<option value="">(no extensions loaded)</option>';
@@ -4662,7 +4835,11 @@ def dashboard():
         const t = row.querySelector('.ca-type').value;
         if (t === 'ai') {
           const p = row.querySelector('.ca-prov').value;
-          if (p) out[ch] = { agent: 'ai', provider: p };
+          if (p && p.indexOf('endpoint:') === 0) {
+            out[ch] = { agent: 'ai', endpoint: p.slice('endpoint:'.length) };
+          } else if (p) {
+            out[ch] = { agent: 'ai', provider: p };
+          }
         } else if (t === 'extension') {
           const s = row.querySelector('.ca-ext').value;
           if (s) out[ch] = { agent: 'extension', slug: s };
@@ -4681,6 +4858,113 @@ def dashboard():
         alert('Channel agents saved and applied live.');
         renderChannelAgentsEditor();
         if (typeof fetchMessagesAndNodes === 'function') fetchMessagesAndNodes();
+      } catch (e) { alert('Error saving: ' + e.message); }
+    }
+
+    // --- v0.7.3.1: Named AI Endpoints manager (define multiple OpenAI-compatible
+    // targets, each with its own name + type + URL/key/model). ---
+    let aiEndpoints = {};      // name -> {type,url,model,timeout,has_key}
+    let aiEndpointTypes = [];
+    let aiEndpointTypeUrls = {};
+
+    async function refreshAiEndpoints() {
+      try {
+        const r = await fetch('/api/ai_endpoints');
+        const d = await r.json();
+        aiEndpoints = d.endpoints || {};
+        aiEndpointTypes = d.types || [];
+        aiEndpointTypeUrls = d.type_urls || {};
+        // keep the agent editor's endpoint list in sync
+        channelAgentMeta.endpoints = Object.keys(aiEndpoints).sort();
+        const panel = document.getElementById('aiEndpointsPanel');
+        if (panel && panel.style.display !== 'none') renderAiEndpointsEditor();
+      } catch (e) { /* non-fatal */ }
+    }
+
+    function toggleAiEndpointsPanel() {
+      const panel = document.getElementById('aiEndpointsPanel');
+      if (!panel) return;
+      const show = panel.style.display === 'none' || !panel.style.display;
+      panel.style.display = show ? 'block' : 'none';
+      if (show) { refreshAiEndpoints(); renderAiEndpointsEditor(); }
+    }
+
+    function _aiEndpointRow(name, ep) {
+      ep = ep || { type: 'openai_compatible', url: '', model: '', timeout: 60, has_key: false };
+      const row = document.createElement('div');
+      row.className = 'ep-row';
+      row.style.cssText = 'border:1px solid #333;border-radius:8px;padding:10px;margin-bottom:8px;background:#0d0d0d;';
+      const typeOpts = (aiEndpointTypes.length ? aiEndpointTypes : ['openai_compatible']).map(t =>
+        '<option value="' + t + '"' + (ep.type === t ? ' selected' : '') + '>' + t + '</option>').join('');
+      row.innerHTML =
+        '<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;">'
+        + '<label style="color:#ccc;font-size:0.85em;">Name</label>'
+        + '<input type="text" class="ep-name" value="' + (name || '').replace(/"/g, "&quot;") + '" placeholder="my-endpoint" style="background:#222;color:#0ff;border:1px solid #555;border-radius:4px;padding:4px;">'
+        + '<label style="color:#ccc;font-size:0.85em;">Type</label>'
+        + '<select class="ep-type" style="background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px;">' + typeOpts + '</select>'
+        + '<label style="color:#ccc;font-size:0.85em;">API URL</label>'
+        + '<input type="text" class="ep-url" value="' + (ep.url || '').replace(/"/g, "&quot;") + '" placeholder="(blank = default for type)" style="background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px;">'
+        + '<label style="color:#ccc;font-size:0.85em;">API Key</label>'
+        + '<input type="password" class="ep-key" placeholder="' + (ep.has_key ? '•••••• (stored — leave blank to keep)' : 'API key') + '" style="background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px;">'
+        + '<label style="color:#ccc;font-size:0.85em;">Model</label>'
+        + '<input type="text" class="ep-model" value="' + (ep.model || '').replace(/"/g, "&quot;") + '" placeholder="gpt-4.1-mini" style="background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px;">'
+        + '<label style="color:#ccc;font-size:0.85em;">Timeout (s)</label>'
+        + '<input type="number" class="ep-timeout" value="' + (ep.timeout || 60) + '" style="background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px;width:90px;">'
+        + '</div>'
+        + '<div style="margin-top:6px;text-align:right;"><button type="button" class="reply-btn" style="font-size:0.8em;border-color:#844;color:#f88;">Remove</button></div>';
+      row.querySelector('button').addEventListener('click', () => row.remove());
+      return row;
+    }
+
+    function renderAiEndpointsEditor() {
+      const body = document.getElementById('aiEndpointsBody');
+      if (!body) return;
+      body.innerHTML = '';
+      const names = Object.keys(aiEndpoints).sort();
+      if (!names.length) {
+        body.innerHTML = '<div style="color:#888;font-size:0.85em;padding:4px 0;">No named endpoints yet. Add one to point a channel at a dedicated AI target.</div>';
+        return;
+      }
+      names.forEach(n => body.appendChild(_aiEndpointRow(n, aiEndpoints[n])));
+    }
+
+    function addAiEndpointRow() {
+      const body = document.getElementById('aiEndpointsBody');
+      if (!body) return;
+      if (body.querySelector('div[style*="No named endpoints"]')) body.innerHTML = '';
+      body.appendChild(_aiEndpointRow('', null));
+    }
+
+    async function saveAiEndpoints() {
+      const out = {};
+      let bad = false;
+      document.querySelectorAll('#aiEndpointsBody .ep-row').forEach(row => {
+        const name = row.querySelector('.ep-name').value.trim();
+        if (!name) { return; }
+        if (out[name]) { bad = true; }
+        const ep = {
+          type: row.querySelector('.ep-type').value,
+          url: row.querySelector('.ep-url').value.trim(),
+          model: row.querySelector('.ep-model').value.trim(),
+          timeout: parseInt(row.querySelector('.ep-timeout').value, 10) || 60
+        };
+        const key = row.querySelector('.ep-key').value;
+        if (key) ep.api_key = key;   // blank keeps stored key server-side
+        out[name] = ep;
+      });
+      if (bad) { alert('Endpoint names must be unique.'); return; }
+      try {
+        const r = await fetch('/api/ai_endpoints', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoints: out })
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.message || 'Save failed');
+        aiEndpoints = j.endpoints || {};
+        channelAgentMeta.endpoints = Object.keys(aiEndpoints).sort();
+        alert('AI endpoints saved and applied live.');
+        renderAiEndpointsEditor();
+        renderChannelAgentsEditor();
       } catch (e) { alert('Error saving: ' + e.message); }
     }
 
@@ -7068,7 +7352,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.3 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.3.1 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -7501,6 +7785,22 @@ def dashboard():
         <div style="margin-bottom:10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
           <button class="reply-btn" onclick="refreshChannelAgents()">Refresh</button>
           <button class="mark-read-btn" onclick="saveChannelAgents()">Save &amp; Apply</button>
+          <button class="reply-btn" onclick="toggleAiEndpointsPanel()" title="Define multiple named AI targets (e.g. 2 OpenAI-compatible endpoints)">🔌 Manage AI Endpoints</button>
+        </div>
+        <div id="aiEndpointsPanel" style="display:none; border:1px solid #5b2a86; border-radius:8px; padding:12px; margin-bottom:12px; background:#0a0a0a;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <h4 style="margin:0; color:#c5a3ff;">🔌 Named AI Endpoints</h4>
+            <span style="color:#888; font-size:0.8em;">OpenAI-compatible targets</span>
+          </div>
+          <div style="color:#bbb; font-size:0.84em; margin-bottom:8px;">
+            Give each AI target a unique <strong>name</strong>, a <strong>type</strong>, and its own URL/key/model — then pick it per channel above
+            (under "Named Endpoints"). This lets you point two channels at, say, two different OpenAI-compatible agents.
+          </div>
+          <div id="aiEndpointsBody"></div>
+          <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="reply-btn" onclick="addAiEndpointRow()">+ Add Endpoint</button>
+            <button class="mark-read-btn" onclick="saveAiEndpoints()">Save Endpoints</button>
+          </div>
         </div>
         <div style="border:1px solid var(--theme-color); border-radius:8px; overflow:hidden;">
           <div style="background:#222; padding:8px 12px; border-bottom:1px solid var(--theme-color); display:flex; gap:14px; font-weight:bold; color:var(--theme-color); font-size:0.9em;">
@@ -7750,7 +8050,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.3 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.3.1 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>
