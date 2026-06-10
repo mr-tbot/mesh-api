@@ -190,7 +190,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.3.1 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.3.2 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -4405,6 +4405,8 @@ def dashboard():
     window.addEventListener('online', function() { updateMapOfflineNotice(); if (nodeMapInstance) applyMapTileLayer(); });
     window.addEventListener('offline', updateMapOfflineNotice);
     function initNodeMapOnLoad() {
+      const filterEl = document.getElementById('mapNetFilter');
+      if (filterEl) filterEl.value = getMapFilter();
       const panel = document.getElementById('nodeMapPanel');
       if (panel && !panel.classList.contains('collapsed')) {
         setTimeout(function() {
@@ -6203,18 +6205,53 @@ def dashboard():
       }, 300);
     }
 
+    function getMapFilter() {
+      try { return localStorage.getItem('meshapi_map_filter') || 'all'; } catch(e) { return 'all'; }
+    }
+    function onMapFilterChange() {
+      const el = document.getElementById('mapNetFilter');
+      if (el) { try { localStorage.setItem('meshapi_map_filter', el.value); } catch(e){} }
+      mapLastNodeCount = -1; // force a re-fit when the filter changes
+      updateNodeMap();
+    }
+    // Merge live GPS from the /nodes poll (esp. MeshCore adv_lat/adv_lon) into
+    // nodeGPSInfo. The server only renders nodeGPSInfo once at page load, so
+    // positions discovered AFTER load (common for MeshCore contacts) were never
+    // mapped until a manual refresh. This keeps the map live for both networks.
+    function mergeLiveNodeGPS() {
+      if (!Array.isArray(allNodes)) return;
+      for (const n of allNodes) {
+        if (n == null || n.lat == null || n.lon == null) continue;
+        const key = String(n.id);
+        const prev = nodeGPSInfo[key] || {};
+        nodeGPSInfo[key] = Object.assign({}, prev, {
+          lat: n.lat,
+          lon: n.lon,
+          network: n.network || prev.network || 'meshtastic',
+        });
+      }
+    }
     function updateNodeMap() {
       if (!nodeMapInstance) return;
+      mergeLiveNodeGPS();
+      const mapFilter = getMapFilter();
       // Clear existing markers
       nodeMapMarkers.forEach(m => nodeMapInstance.removeLayer(m));
       nodeMapMarkers = [];
       nodeMarkerLookup = {};
       let bounds = [];
+      let shownCount = 0;
       // Add markers for all nodes with GPS
       for (let nid in nodeGPSInfo) {
         let gps = nodeGPSInfo[nid];
         if (gps && gps.lat != null && gps.lon != null) {
           let node = allNodes.find(n => String(n.id) === nid);
+          let isMC = (gps.network === 'meshcore') || (node && node.network === 'meshcore');
+          let isFav = isFavoriteNode(nid);
+          // Apply the map filter (All / Favorites / Meshtastic / MeshCore)
+          if (mapFilter === 'favorites' && !isFav) continue;
+          if (mapFilter === 'meshtastic' && isMC) continue;
+          if (mapFilter === 'meshcore' && !isMC) continue;
           let name = node ? (node.shortName || nid) : nid;
           let longName = node && node.longName ? node.longName : '';
           let cName = getCustomNodeName(nid);
@@ -6234,7 +6271,6 @@ def dashboard():
           popup += `<a href='https://www.google.com/maps/search/?api=1&query=${gps.lat},${gps.lon}' target='_blank' style='background:#34a853;color:#fff;border:none;padding:4px 8px;border-radius:5px;text-decoration:none;font-weight:bold;font-size:0.85em;'>🗺️ Maps</a>`;
           popup += `</div>`;
           // v0.7.0: distinguish networks on the map. MeshCore = purple dot, Meshtastic = default blue pin.
-          let isMC = (gps.network === 'meshcore') || (node && node.network === 'meshcore');
           let netName = isMC ? 'MeshCore' : 'Meshtastic';
           // v0.7.2.4: flag nodes heard via MQTT (not direct RF).
           let viaMqtt = !!(node && node.via_mqtt) || !!gps.via_mqtt;
@@ -6255,16 +6291,18 @@ def dashboard():
           } else {
             marker = L.marker([gps.lat, gps.lon]).bindPopup(popup, {maxWidth: 400});
           }
-          marker.bindTooltip((cName || name) + (isMC ? ' [MC]' : '') + (viaMqtt ? ' ☁' : ''), { permanent: true, direction: 'right', offset: [12, 0], className: 'leaflet-marker-label' });
+          marker.bindTooltip((cName || name) + (isMC ? ' [MC]' : ' [MT]') + (viaMqtt ? ' ☁' : ''), { permanent: true, direction: 'right', offset: [12, 0], className: 'leaflet-marker-label' });
           marker.addTo(nodeMapInstance);
           nodeMapMarkers.push(marker);
           nodeMarkerLookup[nid] = marker;
           bounds.push([gps.lat, gps.lon]);
+          shownCount++;
         }
       }
-      // Add connected node marker
+      // Add connected node marker (your own radio). Shown for All / Meshtastic
+      // filters; hidden when filtering to MeshCore-only or Favorites-only.
       let effGPS = getEffectiveMyGPS();
-      if (effGPS && effGPS.lat != null && effGPS.lon != null) {
+      if (effGPS && effGPS.lat != null && effGPS.lon != null && (mapFilter === 'all' || mapFilter === 'meshtastic')) {
         let myMarker = L.circleMarker([effGPS.lat, effGPS.lon], {
           radius: 8, color: '#00ff00', fillColor: '#00ff00', fillOpacity: 0.8
         }).bindPopup('<b>Connected Node (You)</b><br>📍 ' + effGPS.lat.toFixed(5) + ', ' + effGPS.lon.toFixed(5));
@@ -6273,6 +6311,8 @@ def dashboard():
         nodeMapMarkers.push(myMarker);
         bounds.push([effGPS.lat, effGPS.lon]);
       }
+      const cntEl = document.getElementById('mapFilterCount');
+      if (cntEl) cntEl.textContent = shownCount + (shownCount === 1 ? ' node' : ' nodes');
       if (bounds.length > 0 && (!mapUserInteracted || bounds.length !== mapLastNodeCount)) {
         nodeMapInstance.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 });
         mapLastNodeCount = bounds.length;
@@ -7211,6 +7251,16 @@ def dashboard():
       <div><button class="section-hide-btn" onclick="hideSection('nodeMapPanel')" title="Hide this section">✕</button></div>
     </div>
     <div class="panel-body" style="position:relative;">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <label for="mapNetFilter" style="font-size:0.85em; color:#bbb;">Show:</label>
+        <select id="mapNetFilter" onchange="onMapFilterChange()" style="background:var(--bg-input); color:#fff; border:1px solid var(--color-map); border-radius:4px; padding:3px 6px; font-size:0.85em;">
+          <option value="all">All nodes</option>
+          <option value="favorites">⭐ Favorites only</option>
+          <option value="meshtastic">🔵 Meshtastic only</option>
+          <option value="meshcore">🟣 MeshCore only</option>
+        </select>
+        <span id="mapFilterCount" style="font-size:0.8em; color:#888;"></span>
+      </div>
       <div id="nodeMap"></div>
       <div id="mapDmBox">
         <div class="mapDm-header">
@@ -7352,7 +7402,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.3.1 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.3.2 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -8050,7 +8100,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.3.1 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.3.2 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>
