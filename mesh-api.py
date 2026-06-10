@@ -190,7 +190,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.2.4 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.2.5 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -2611,7 +2611,7 @@ def dashboard():
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
   <style>
-  :root { --theme-color: #ffa500; --bg-primary: #000; --bg-panel: #111; --bg-input: #222; --text-primary: #fff; --text-muted: #aaa; --border-radius: 10px; --color-map: #ffa500; --color-send: #ffa500; --color-dm: #ffa500; --color-channel: #ffa500; --color-nodes: #ffa500; --color-discord: #ffa500; }
+  :root { --theme-color: #ffa500; --bg-primary: #000; --bg-panel: #111; --bg-panel-glass: rgba(17,17,17,0.82); --bg-input: #222; --text-primary: #fff; --text-muted: #aaa; --border-radius: 10px; --color-map: #ffa500; --color-send: #ffa500; --color-dm: #ffa500; --color-channel: #ffa500; --color-nodes: #ffa500; --color-discord: #ffa500; }
   html, body { margin: 0; padding: 0; }
   /* Beta Disclaimer Modal */
   #disclaimerOverlay { position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:100000; display:flex; align-items:center; justify-content:center; }
@@ -2622,6 +2622,9 @@ def dashboard():
   #disclaimerOverlay .btn-accept { background:#2e7d32; color:#fff; border:none; padding:12px 32px; border-radius:8px; font-size:1em; font-weight:bold; cursor:pointer; }
   #disclaimerOverlay .btn-accept:hover { background:#388e3c; }
   body { background: var(--bg-primary); color: var(--text-primary); font-family: 'Segoe UI', Arial, sans-serif; margin: 0; transition: filter 0.5s linear; }
+  /* v0.7.2.5: mouse-reactive animated "mesh" grid background behind everything */
+  #meshBgCanvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; display: block; pointer-events: none; background: var(--bg-primary); }
+  #appRoot { position: relative; z-index: 1; }
   #connectionStatus { position: relative; width: 100%; text-align: center; padding: 0; font-size: 14px; font-weight: bold; display: block; min-height: 20px; background: green; margin: 0; border-bottom: 1px solid var(--theme-color); }
   /* Header buttons moved inside Send Form panel */
   #ticker-container { position: relative; width: 100%; display: none; align-items: center; justify-content: center; pointer-events: none; margin: 0; }
@@ -2629,7 +2632,7 @@ def dashboard():
     #ticker p { display: inline-block; margin: 0; animation: tickerScroll 30s linear infinite; vertical-align: middle; min-width: 100vw; }
     #ticker .dismiss-btn { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); font-size: 18px; background: #222; color: #fff; border: 1px solid var(--theme-color); border-radius: 4px; cursor: pointer; padding: 2px 10px; z-index: 10; }
     @keyframes tickerScroll { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
-    #sendForm { margin: 20px; padding: 20px; background: var(--bg-panel); border: 2px solid var(--color-send); border-radius: var(--border-radius); position: relative; }
+    #sendForm { margin: 20px; padding: 20px; background: var(--bg-panel-glass); border: 2px solid var(--color-send); border-radius: var(--border-radius); position: relative; }
     #sendForm h2 { color: var(--color-send); }
     #nodeMapPanel { border-color: var(--color-map); }
     #nodeMapPanel h2 { color: var(--color-map); }
@@ -2654,7 +2657,7 @@ def dashboard():
     }
     .three-col .col .drag-handle { cursor: grab; display: inline-block; margin-right: 6px; color: #666; font-size: 1em; user-select: none; }
     .three-col .col .drag-handle:hover { color: var(--theme-color); }
-    .lcars-panel { background: var(--bg-panel); padding: 20px; border: 2px solid var(--theme-color); border-radius: var(--border-radius); transition: box-shadow 0.2s; }
+    .lcars-panel { background: var(--bg-panel-glass); padding: 20px; border: 2px solid var(--theme-color); border-radius: var(--border-radius); transition: box-shadow 0.2s; }
     .lcars-panel:hover { box-shadow: 0 0 8px rgba(255,165,0,0.15); }
     .lcars-panel h2 { color: var(--theme-color); margin-top: 0; font-size: 1.15em; }
     .lcars-panel .panel-title-row { display:flex; align-items:center; justify-content: space-between; gap: 10px; }
@@ -3182,7 +3185,11 @@ def dashboard():
       colorDiscord: "#ffa500",
       myLat: "",
       myLon: "",
-      channelNames: {}
+      channelNames: {},
+      bgMeshEnabled: true,
+      bgMeshSpeed: 1.0,
+      bgMeshColor: "#ffa500",
+      bgMeshThickness: 2.0
     };
     let hueRotateInterval = null;
     let currentHue = 0;
@@ -3589,6 +3596,12 @@ def dashboard():
       applySectionColors();
       if (uiSettings.hueRotateEnabled) startHueRotate(uiSettings.hueRotateSpeed);
       setIncomingSound(uiSettings.soundURL);
+      // Mesh background controls
+      document.getElementById('bgMeshEnabled').checked = uiSettings.bgMeshEnabled !== false;
+      document.getElementById('bgMeshSpeed').value = uiSettings.bgMeshSpeed || 1.0;
+      document.getElementById('bgMeshColor').value = uiSettings.bgMeshColor || '#ffa500';
+      document.getElementById('bgMeshThickness').value = uiSettings.bgMeshThickness || 2.0;
+      applyMeshBg();
 
       // Apply button
       document.getElementById('applySettingsBtn').addEventListener('click', function() {
@@ -3623,6 +3636,12 @@ def dashboard():
         uiSettings.colorNodes = document.getElementById('colorNodesPicker').value;
         uiSettings.colorDiscord = document.getElementById('colorDiscordPicker').value;
         applySectionColors();
+        // Mesh background
+        uiSettings.bgMeshEnabled = document.getElementById('bgMeshEnabled').checked;
+        uiSettings.bgMeshSpeed = parseFloat(document.getElementById('bgMeshSpeed').value);
+        uiSettings.bgMeshColor = document.getElementById('bgMeshColor').value;
+        uiSettings.bgMeshThickness = parseFloat(document.getElementById('bgMeshThickness').value);
+        applyMeshBg();
         // Manual GPS
         uiSettings.myLat = document.getElementById('myLatInput').value;
         uiSettings.myLon = document.getElementById('myLonInput').value;
@@ -3700,6 +3719,161 @@ def dashboard():
       const sortable = document.getElementById('sortableContainer');
       if (sortable) sortable.style.filter = '';
       currentHue = 0;
+    }
+
+    // ------------------------------------------------------------------
+    // v0.7.2.5: Mouse-reactive animated "mesh" grid background
+    // ------------------------------------------------------------------
+    // A field of points laid out on a loose grid drifts continuously and is
+    // attracted toward the mouse, with lines drawn between nearby points to
+    // form a warping mesh. Fully toggleable / speed- and color-adjustable from
+    // the UI Settings panel.
+    let meshBg = {
+      canvas: null, ctx: null, raf: null, points: [], w: 0, h: 0,
+      mouseX: -9999, mouseY: -9999, targetX: -9999, targetY: -9999,
+      running: false, dpr: 1, lastT: 0, spacing: 55
+    };
+    function _meshHexToRgb(hex) {
+      let h = (hex || '#ffa500').replace('#', '');
+      if (h.length === 3) h = h.split('').map(c => c + c).join('');
+      const n = parseInt(h, 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    }
+    function _meshInitPoints() {
+      const spacing = meshBg.spacing; // px between grid points (denser = smaller)
+      const cols = Math.ceil(meshBg.w / spacing) + 2;
+      const rows = Math.ceil(meshBg.h / spacing) + 2;
+      meshBg.cols = cols;
+      meshBg.points = [];
+      for (let yi = 0; yi < rows; yi++) {
+        for (let xi = 0; xi < cols; xi++) {
+          const bx = xi * spacing - spacing;
+          const by = yi * spacing - spacing;
+          meshBg.points.push({
+            bx, by,                       // anchor (home) position
+            x: bx, y: by,                 // current position
+            vx: (Math.random() - 0.5) * 0.3,
+            vy: (Math.random() - 0.5) * 0.3,
+            ph: Math.random() * Math.PI * 2 // drift phase
+          });
+        }
+      }
+    }
+    function _meshResize() {
+      if (!meshBg.canvas) return;
+      meshBg.dpr = window.devicePixelRatio || 1;
+      meshBg.w = window.innerWidth;
+      meshBg.h = window.innerHeight;
+      meshBg.canvas.width = Math.round(meshBg.w * meshBg.dpr);
+      meshBg.canvas.height = Math.round(meshBg.h * meshBg.dpr);
+      meshBg.ctx.setTransform(meshBg.dpr, 0, 0, meshBg.dpr, 0, 0);
+      _meshInitPoints();
+    }
+    function _meshFrame(t) {
+      if (!meshBg.running) return;
+      const ctx = meshBg.ctx;
+      const speed = Math.max(0.1, Number(uiSettings.bgMeshSpeed) || 1);
+      // Smoothly ease the attractor toward the latest mouse position.
+      meshBg.targetX += (meshBg.mouseX - meshBg.targetX) * 0.08;
+      meshBg.targetY += (meshBg.mouseY - meshBg.targetY) * 0.08;
+      const time = t * 0.0006 * speed;
+      ctx.clearRect(0, 0, meshBg.w, meshBg.h);
+      const col = _meshHexToRgb(uiSettings.bgMeshColor);
+      const pts = meshBg.points;
+      const influence = 170;       // mouse influence radius
+      const maxLink = meshBg.spacing * 1.7;  // max distance to draw a link (scales with density)
+      const maxLink2 = maxLink * maxLink;
+      const lineW = Math.max(0.5, Number(uiSettings.bgMeshThickness) || 2);
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        // gentle continuous drift around the anchor
+        const driftX = Math.cos(time + p.ph) * 10;
+        const driftY = Math.sin(time * 1.1 + p.ph) * 10;
+        let hx = p.bx + driftX;
+        let hy = p.by + driftY;
+        // mouse attraction/warp
+        const dx = meshBg.targetX - p.x;
+        const dy = meshBg.targetY - p.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < influence && dist > 0.01) {
+          const pull = (1 - dist / influence) * 18 * speed;
+          hx += (dx / dist) * pull;
+          hy += (dy / dist) * pull;
+        }
+        // ease current position toward the target home
+        p.x += (hx - p.x) * 0.08 * speed;
+        p.y += (hy - p.y) * 0.08 * speed;
+      }
+      // draw links
+      const cols = meshBg.cols || (Math.ceil(meshBg.w / meshBg.spacing) + 2);
+      ctx.lineWidth = lineW;
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        // link to right + down neighbours (grid adjacency) for a clean mesh
+        const right = ((i + 1) % cols !== 0) ? pts[i + 1] : null;
+        const down = pts[i + cols];
+        for (const q of [right, down]) {
+          if (!q) continue;
+          const ddx = p.x - q.x, ddy = p.y - q.y;
+          const d2 = ddx * ddx + ddy * ddy;
+          if (d2 > maxLink2) continue;
+          // brighter near the mouse for a more pronounced warp; denser + thicker overall
+          const md = Math.min(Math.hypot(meshBg.targetX - p.x, meshBg.targetY - p.y),
+                              Math.hypot(meshBg.targetX - q.x, meshBg.targetY - q.y));
+          const nearBoost = md < influence ? (1 - md / influence) * 0.45 : 0;
+          const a = Math.min(0.95, (1 - Math.sqrt(d2) / maxLink) * 0.85 + nearBoost);
+          ctx.strokeStyle = 'rgba(' + col.r + ',' + col.g + ',' + col.b + ',' + a.toFixed(3) + ')';
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(q.x, q.y);
+          ctx.stroke();
+        }
+      }
+      // draw points (brighter near the mouse)
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const dm = Math.hypot(meshBg.targetX - p.x, meshBg.targetY - p.y);
+        const near = dm < influence ? (1 - dm / influence) : 0;
+        const r = (lineW * 0.7) + 0.8 + near * 2.4;
+        const a = 0.5 + near * 0.5;
+        ctx.fillStyle = 'rgba(' + col.r + ',' + col.g + ',' + col.b + ',' + a.toFixed(3) + ')';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      meshBg.raf = requestAnimationFrame(_meshFrame);
+    }
+    function startMeshBg() {
+      const canvas = document.getElementById('meshBgCanvas');
+      if (!canvas) return;
+      if (meshBg.running) return;
+      meshBg.canvas = canvas;
+      meshBg.ctx = canvas.getContext('2d');
+      canvas.style.display = 'block';
+      _meshResize();
+      meshBg.running = true;
+      if (!meshBg._wired) {
+        window.addEventListener('resize', function() { if (meshBg.running) _meshResize(); });
+        window.addEventListener('mousemove', function(e) { meshBg.mouseX = e.clientX; meshBg.mouseY = e.clientY; });
+        window.addEventListener('mouseout', function() { meshBg.mouseX = -9999; meshBg.mouseY = -9999; });
+        window.addEventListener('touchmove', function(e) {
+          if (e.touches && e.touches[0]) { meshBg.mouseX = e.touches[0].clientX; meshBg.mouseY = e.touches[0].clientY; }
+        }, { passive: true });
+        meshBg._wired = true;
+      }
+      meshBg.raf = requestAnimationFrame(_meshFrame);
+    }
+    function stopMeshBg() {
+      meshBg.running = false;
+      if (meshBg.raf) cancelAnimationFrame(meshBg.raf);
+      meshBg.raf = null;
+      if (meshBg.ctx && meshBg.canvas) meshBg.ctx.clearRect(0, 0, meshBg.w, meshBg.h);
+      const canvas = document.getElementById('meshBgCanvas');
+      if (canvas) canvas.style.display = 'none';
+    }
+    function applyMeshBg() {
+      if (uiSettings.bgMeshEnabled === false) stopMeshBg();
+      else startMeshBg();
     }
     // Per-node sound management
     function renderNodeSoundEntries() {
@@ -6184,6 +6358,8 @@ def dashboard():
 </head>
 <body>
 
+<canvas id="meshBgCanvas" aria-hidden="true"></canvas>
+
 <div id="disclaimerOverlay">
   <div class="disclaimer-box" style="max-width:640px;">
     <!-- Step 1: Welcome -->
@@ -6613,7 +6789,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2.4 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2.5 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -7105,6 +7281,18 @@ def dashboard():
           <label for="mapStyleSelect">Map Style</label>
           <select id="mapStyleSelect" style="background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:4px;">
           </select>
+
+          <label for="bgMeshEnabled">Mesh Background</label>
+          <input type="checkbox" id="bgMeshEnabled" checked>
+
+          <label for="bgMeshSpeed">Mesh Speed</label>
+          <input type="range" id="bgMeshSpeed" min="0.1" max="3" step="0.1" value="1" style="width:100%;">
+
+          <label for="bgMeshColor">Mesh Color</label>
+          <input type="color" id="bgMeshColor" value="#ffa500">
+
+          <label for="bgMeshThickness">Mesh Line Thickness</label>
+          <input type="range" id="bgMeshThickness" min="0.5" max="5" step="0.5" value="2" style="width:100%;">
         </div>
 
         <h3>🗺️ Offline Map Image</h3>
@@ -7238,7 +7426,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2.4 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2.5 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>
