@@ -190,7 +190,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.3.2 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.3.6 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -434,6 +434,13 @@ AI_ENDPOINT_TYPE_URLS = {
     "mistral": "https://api.mistral.ai/v1/chat/completions",
     "lmstudio": "http://localhost:1234/v1/chat/completions",
 }
+# v0.7.3.6: token-free heartbeat for named AI endpoints. A lightweight background
+# thread periodically pings each endpoint's /models route (a cheap, tokenless GET)
+# so the WebUI can show a live connection status per endpoint without spending any
+# AI tokens. Cache is { name: {ok, state, status, latency_ms, detail, ts} }.
+AI_ENDPOINT_HEARTBEAT_SEC = int(config.get("ai_endpoint_heartbeat_sec", 60) or 60)
+AI_ENDPOINT_HEALTH = {}
+AI_ENDPOINT_HEALTH_LOCK = threading.Lock()
 MAX_CHUNK_SIZE = config.get("chunk_size", 200)
 MAX_CHUNKS = int(config.get("max_ai_chunks", 5))
 CHUNK_DELAY = config.get("chunk_delay", 10)
@@ -1370,6 +1377,98 @@ def send_to_named_endpoint(name, prompt):
     model = ep.get("model", "")
     timeout = int(ep.get("timeout", 60) or 60)
     return _send_to_openai_compatible(prompt, f"endpoint:{name}", api_key, url, model, timeout)
+
+
+def _endpoint_models_url(ep):
+    """Derive a token-free health-check URL (``/models``) from an endpoint.
+
+    Every named endpoint speaks the OpenAI-compatible API, which exposes a
+    ``/models`` listing alongside ``/chat/completions``. Hitting it costs zero
+    tokens, so it's ideal for a heartbeat. Returns ("" , "") if no URL is set.
+    """
+    ep_type = (ep.get("type") or "openai_compatible").lower()
+    url = (ep.get("url") or "").strip() or AI_ENDPOINT_TYPE_URLS.get(ep_type, "")
+    if not url:
+        return ""
+    base = url.strip()
+    if base.endswith("/chat/completions"):
+        return base[: -len("/chat/completions")] + "/models"
+    if "/chat/completions" in base:
+        return base.split("/chat/completions", 1)[0] + "/models"
+    return base.rstrip("/") + "/models"
+
+
+def check_ai_endpoint_health(name, ep, timeout=6):
+    """Ping a named AI endpoint without spending tokens.
+
+    Performs a GET on the endpoint's ``/models`` route. Any HTTP response means
+    the server is reachable. Returns a status dict:
+      - state ``online``   — 200 OK (reachable + key accepted)
+      - state ``auth``     — 401/403 (reachable, but key/permission issue)
+      - state ``reachable``— other HTTP status (server up, odd response)
+      - state ``offline``  — connection refused / timeout / DNS error
+      - state ``unconfigured`` — no URL configured
+    """
+    murl = _endpoint_models_url(ep) if isinstance(ep, dict) else ""
+    if not murl:
+        return {"ok": False, "state": "unconfigured", "status": None,
+                "latency_ms": None, "detail": "No URL configured", "ts": time.time()}
+    headers = {}
+    api_key = (ep.get("api_key") or "") if isinstance(ep, dict) else ""
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    t0 = time.time()
+    try:
+        r = requests.get(murl, headers=headers, timeout=timeout)
+        latency = int((time.time() - t0) * 1000)
+        code = r.status_code
+        if code == 200:
+            state, ok = "online", True
+        elif code in (401, 403):
+            state, ok = "auth", False
+        else:
+            state, ok = "reachable", True
+        return {"ok": ok, "state": state, "status": code,
+                "latency_ms": latency, "detail": f"HTTP {code}", "ts": time.time()}
+    except requests.exceptions.Timeout:
+        return {"ok": False, "state": "offline", "status": None,
+                "latency_ms": int((time.time() - t0) * 1000),
+                "detail": "Timeout", "ts": time.time()}
+    except Exception as e:
+        return {"ok": False, "state": "offline", "status": None,
+                "latency_ms": int((time.time() - t0) * 1000),
+                "detail": str(e)[:120], "ts": time.time()}
+
+
+def refresh_ai_endpoint_health(names=None):
+    """Check the given endpoints (or all) and update the shared health cache."""
+    src = AI_ENDPOINTS if isinstance(AI_ENDPOINTS, dict) else {}
+    targets = names if names is not None else list(src.keys())
+    results = {}
+    for nm in targets:
+        ep = src.get(nm)
+        if not isinstance(ep, dict):
+            continue
+        results[nm] = check_ai_endpoint_health(nm, ep)
+    with AI_ENDPOINT_HEALTH_LOCK:
+        # Drop stale entries for endpoints that no longer exist.
+        for stale in [k for k in AI_ENDPOINT_HEALTH if k not in src]:
+            AI_ENDPOINT_HEALTH.pop(stale, None)
+        AI_ENDPOINT_HEALTH.update(results)
+    return results
+
+
+def ai_endpoint_heartbeat_loop():
+    """Background heartbeat: periodically refresh AI-endpoint health (no tokens)."""
+    # Small initial delay so startup isn't slowed by network checks.
+    time.sleep(8)
+    while True:
+        try:
+            if isinstance(AI_ENDPOINTS, dict) and AI_ENDPOINTS:
+                refresh_ai_endpoint_health()
+        except Exception as e:
+            dprint(f"AI endpoint heartbeat error: {e}")
+        time.sleep(max(15, AI_ENDPOINT_HEARTBEAT_SEC))
 
 
 def get_ai_response(prompt, provider=None, endpoint=None):
@@ -2489,6 +2588,28 @@ def api_ai_endpoints_save():
         return jsonify({"status": "ok", "endpoints": masked})
     except Exception as e:
         return jsonify({"message": str(e)}), 500
+
+
+@app.route("/api/ai_endpoints/health", methods=["GET"])
+def api_ai_endpoints_health():
+    """Token-free heartbeat for named AI endpoints.
+
+    Returns the cached connection status per endpoint (state/latency/detail).
+    Pass ``?check=1`` to force an immediate live check instead of using the
+    background-cached values. Never sends a chat completion, so it costs no
+    AI tokens — it only pings each endpoint's ``/models`` route.
+    """
+    src = AI_ENDPOINTS if isinstance(AI_ENDPOINTS, dict) else {}
+    force = request.args.get("check") in ("1", "true", "yes")
+    if force:
+        refresh_ai_endpoint_health()
+    with AI_ENDPOINT_HEALTH_LOCK:
+        health = {n: dict(v) for n, v in AI_ENDPOINT_HEALTH.items() if n in src}
+    return jsonify({
+        "health": health,
+        "interval_sec": AI_ENDPOINT_HEARTBEAT_SEC,
+        "names": sorted(list(src.keys())),
+    })
 
 
 @app.route("/api/channel_bridge", methods=["GET"])
@@ -4868,6 +4989,8 @@ def dashboard():
     let aiEndpoints = {};      // name -> {type,url,model,timeout,has_key}
     let aiEndpointTypes = [];
     let aiEndpointTypeUrls = {};
+    let aiEndpointHealth = {}; // v0.7.3.6: name -> {ok,state,status,latency_ms,detail,ts}
+    let aiEndpointHealthTimer = null;
 
     async function refreshAiEndpoints() {
       try {
@@ -4883,23 +5006,83 @@ def dashboard():
       } catch (e) { /* non-fatal */ }
     }
 
+    // v0.7.3.6: token-free heartbeat — fetch per-endpoint connection status and
+    // paint the status dots without re-rendering the (editable) rows.
+    async function refreshAiEndpointHealth(force) {
+      try {
+        const r = await fetch('/api/ai_endpoints/health' + (force ? '?check=1' : ''));
+        const d = await r.json();
+        aiEndpointHealth = d.health || {};
+        paintAiEndpointHealth();
+      } catch (e) { /* non-fatal */ }
+    }
+
+    function _epStatusMeta(h) {
+      if (!h) return { color: '#666', label: 'checking…', title: 'No status yet' };
+      const lat = (h.latency_ms != null) ? (' · ' + h.latency_ms + 'ms') : '';
+      switch (h.state) {
+        case 'online':    return { color: '#3fd07a', label: 'online' + lat,    title: 'Reachable — ' + (h.detail || 'HTTP 200') + lat };
+        case 'reachable': return { color: '#e0c341', label: 'reachable' + lat, title: 'Server responded — ' + (h.detail || '') + lat };
+        case 'auth':      return { color: '#e0a341', label: 'auth?' + lat,     title: 'Reachable but key/permission issue — ' + (h.detail || '') + lat };
+        case 'unconfigured': return { color: '#666', label: 'no URL',          title: 'No URL configured for this endpoint' };
+        default:          return { color: '#e0554b', label: 'offline',         title: 'Unreachable — ' + (h.detail || 'connection failed') };
+      }
+    }
+
+    function paintAiEndpointHealth() {
+      document.querySelectorAll('#aiEndpointsBody .ep-row').forEach(row => {
+        const name = (row.dataset.epName || '').trim();
+        const dot = row.querySelector('.ep-status-dot');
+        const lbl = row.querySelector('.ep-status-label');
+        if (!dot || !lbl) return;
+        const meta = _epStatusMeta(name ? aiEndpointHealth[name] : null);
+        dot.style.background = meta.color;
+        dot.style.boxShadow = '0 0 6px ' + meta.color;
+        lbl.textContent = meta.label;
+        lbl.title = meta.title;
+        dot.title = meta.title;
+      });
+    }
+
+    function startAiEndpointHealthPolling() {
+      stopAiEndpointHealthPolling();
+      refreshAiEndpointHealth(false);
+      aiEndpointHealthTimer = setInterval(() => {
+        const panel = document.getElementById('aiEndpointsPanel');
+        if (panel && panel.style.display !== 'none') refreshAiEndpointHealth(false);
+        else stopAiEndpointHealthPolling();
+      }, 30000);
+    }
+
+    function stopAiEndpointHealthPolling() {
+      if (aiEndpointHealthTimer) { clearInterval(aiEndpointHealthTimer); aiEndpointHealthTimer = null; }
+    }
+
     function toggleAiEndpointsPanel() {
       const panel = document.getElementById('aiEndpointsPanel');
       if (!panel) return;
       const show = panel.style.display === 'none' || !panel.style.display;
       panel.style.display = show ? 'block' : 'none';
-      if (show) { refreshAiEndpoints(); renderAiEndpointsEditor(); }
+      if (show) { refreshAiEndpoints(); renderAiEndpointsEditor(); startAiEndpointHealthPolling(); }
+      else { stopAiEndpointHealthPolling(); }
     }
 
     function _aiEndpointRow(name, ep) {
       ep = ep || { type: 'openai_compatible', url: '', model: '', timeout: 60, has_key: false };
       const row = document.createElement('div');
       row.className = 'ep-row';
+      row.dataset.epName = name || '';
       row.style.cssText = 'border:1px solid #333;border-radius:8px;padding:10px;margin-bottom:8px;background:#0d0d0d;';
       const typeOpts = (aiEndpointTypes.length ? aiEndpointTypes : ['openai_compatible']).map(t =>
         '<option value="' + t + '"' + (ep.type === t ? ' selected' : '') + '>' + t + '</option>').join('');
       row.innerHTML =
-        '<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;">'
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+        + '<span style="display:inline-flex;align-items:center;gap:6px;font-size:0.8em;color:#aaa;">'
+        + '<span class="ep-status-dot" style="width:10px;height:10px;border-radius:50%;background:#666;display:inline-block;"></span>'
+        + '<span class="ep-status-label">checking…</span></span>'
+        + '<button type="button" class="reply-btn ep-check-btn" style="font-size:0.72em;padding:2px 8px;">Check now</button>'
+        + '</div>'
+        + '<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;">'
         + '<label style="color:#ccc;font-size:0.85em;">Name</label>'
         + '<input type="text" class="ep-name" value="' + (name || '').replace(/"/g, "&quot;") + '" placeholder="my-endpoint" style="background:#222;color:#0ff;border:1px solid #555;border-radius:4px;padding:4px;">'
         + '<label style="color:#ccc;font-size:0.85em;">Type</label>'
@@ -4913,8 +5096,13 @@ def dashboard():
         + '<label style="color:#ccc;font-size:0.85em;">Timeout (s)</label>'
         + '<input type="number" class="ep-timeout" value="' + (ep.timeout || 60) + '" style="background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px;width:90px;">'
         + '</div>'
-        + '<div style="margin-top:6px;text-align:right;"><button type="button" class="reply-btn" style="font-size:0.8em;border-color:#844;color:#f88;">Remove</button></div>';
-      row.querySelector('button').addEventListener('click', () => row.remove());
+        + '<div style="margin-top:6px;text-align:right;"><button type="button" class="reply-btn ep-remove-btn" style="font-size:0.8em;border-color:#844;color:#f88;">Remove</button></div>';
+      row.querySelector('.ep-remove-btn').addEventListener('click', () => row.remove());
+      row.querySelector('.ep-check-btn').addEventListener('click', () => refreshAiEndpointHealth(true));
+      row.querySelector('.ep-name').addEventListener('input', (e) => {
+        row.dataset.epName = (e.target.value || '').trim();
+        paintAiEndpointHealth();
+      });
       return row;
     }
 
@@ -4928,6 +5116,7 @@ def dashboard():
         return;
       }
       names.forEach(n => body.appendChild(_aiEndpointRow(n, aiEndpoints[n])));
+      paintAiEndpointHealth();
     }
 
     function addAiEndpointRow() {
@@ -4967,6 +5156,7 @@ def dashboard():
         alert('AI endpoints saved and applied live.');
         renderAiEndpointsEditor();
         renderChannelAgentsEditor();
+        refreshAiEndpointHealth(true);
       } catch (e) { alert('Error saving: ' + e.message); }
     }
 
@@ -7402,7 +7592,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.3.2 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.3.6 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -7845,6 +8035,7 @@ def dashboard():
           <div style="color:#bbb; font-size:0.84em; margin-bottom:8px;">
             Give each AI target a unique <strong>name</strong>, a <strong>type</strong>, and its own URL/key/model — then pick it per channel above
             (under "Named Endpoints"). This lets you point two channels at, say, two different OpenAI-compatible agents.
+            Each endpoint shows a live <strong>heartbeat</strong> dot (🟢 online · 🟡 reachable/auth · 🔴 offline) — a token-free <code>/models</code> ping, so it never spends AI tokens.
           </div>
           <div id="aiEndpointsBody"></div>
           <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
@@ -8100,7 +8291,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.3.2 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.3.6 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>
@@ -8620,7 +8811,8 @@ def main():
     # v0.7.0: actually start the connection watchdog (previously defined but never
     # launched). Helps recover from silently dead Meshtastic links (#58).
     threading.Thread(target=connection_monitor, kwargs={"initial_delay": 20}, daemon=True).start()
-
+    # v0.7.3.6: token-free heartbeat for named AI endpoints (WebUI status dots).
+    threading.Thread(target=ai_endpoint_heartbeat_loop, name="ai-endpoint-heartbeat", daemon=True).start()
     # v0.7.0: MeshCore-only / standalone mode — no Meshtastic device required.
     if not MESHTASTIC_ENABLED:
         print("Meshtastic is disabled (meshtastic_enabled=false). Running standalone (MeshCore-only).")
