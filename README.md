@@ -8,6 +8,8 @@
 >
 > Also new in v0.7.0: a built-in **MCP (Model Context Protocol) server** that turns MESH-API into an agentic backend for AI tools, and a **firmware/software update system** that detects your device and notifies you when a newer Meshtastic, MeshCore, or MESH-API version is available. See the dedicated sections below.
 
+- **v0.7.1 Beta** — 🐛 **Bug fix:** the WebUI Extensions Manager **Enable / Disable** buttons now update immediately. The toggle wrote the new state to the extension's `config.json` but the in-memory status returned by `/extensions/status` stayed stale, so the button label and status dot never changed (the change only appeared after a restart). The loader's in-memory state is now kept in sync, so toggling reflects instantly; use **Reload** (or restart) to apply it to the running extensions.
+
 - **v0.7.0 Beta** — 🚀 **Multi-radio overhaul + MCP tool server + firmware updates.**
   - **MeshCore is a first-class radio.** Run Meshtastic-only, MeshCore-only (fully standalone — no Meshtastic device required), or both with MESH-API as the man-in-the-middle. MeshCore connects over serial / TCP / BLE.
   - **Cross-network routing & UI parity** — per-network connection banner, a node **network filter** with collapsible Meshtastic/MeshCore sections, network badges on nodes and messages, distinct map markers, MeshCore channels (group chats / private channels) in the send form, and DMs to MeshCore contacts — mirroring the Meshtastic experience.
