@@ -8,6 +8,8 @@
 >
 > Also new in v0.7.0: a built-in **MCP (Model Context Protocol) server** that turns MESH-API into an agentic backend for AI tools, and a **firmware/software update system** that detects your device and notifies you when a newer Meshtastic, MeshCore, or MESH-API version is available. See the dedicated sections below.
 
+- **v0.7.2 Beta** — 🤖 **Channel Agents are now manageable from the WebUI.** A new **🤖 Agents** toolbar button opens a Channel Agents manager where you can assign any channel to a specific **AI provider** (OpenAI, Hermes, Ollama, Claude, …) or a loaded **extension** (e.g. OpenClaw), with an optional per-channel **PIN** gate. Assignments **apply live** (no restart) and persist to [config.json](config.json). Channels with an assigned agent now show a badge (🤖 provider / 🧩 extension) in the Channel Messages panel, and the legacy `home_assistant_channel_index` mapping is surfaced automatically. The `/api/channel_agents` endpoint gained a `POST` to save assignments.
+
 - **v0.7.1 Beta** — 🐛 **Bug fix:** the WebUI Extensions Manager **Enable / Disable** buttons now update immediately. The toggle wrote the new state to the extension's `config.json` but the in-memory status returned by `/extensions/status` stayed stale, so the button label and status dot never changed (the change only appeared after a restart). The loader's in-memory state is now kept in sync, so toggling reflects instantly; use **Reload** (or restart) to apply it to the running extensions.
 
 - **v0.7.0 Beta** — 🚀 **Multi-radio overhaul + MCP tool server + firmware updates.**

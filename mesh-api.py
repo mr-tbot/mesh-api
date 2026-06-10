@@ -189,7 +189,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.1 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.2 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -393,6 +393,12 @@ HOME_ASSISTANT_CHANNEL_INDEX = int(config.get("home_assistant_channel_index", -1
 #     "7": {"agent": "extension", "slug": "openclaw"},
 #     "8": {"agent": "ai", "provider": "home_assistant", "require_pin": true} }
 CHANNEL_AGENTS = config.get("channel_agents", {}) or {}
+# Canonical list of AI providers selectable as a channel agent (mirrors the
+# dispatch map in get_ai_response). Surfaced to the WebUI Channel Agents editor.
+KNOWN_AI_PROVIDERS = (
+    "lmstudio", "openai", "ollama", "claude", "gemini", "grok", "openrouter",
+    "groq", "deepseek", "mistral", "hermes", "openai_compatible", "home_assistant",
+)
 MAX_CHUNK_SIZE = config.get("chunk_size", 200)
 MAX_CHUNKS = int(config.get("max_ai_chunks", 5))
 CHUNK_DELAY = config.get("chunk_delay", 10)
@@ -2115,7 +2121,8 @@ def api_mcp_info():
 
 @app.route("/api/channel_agents", methods=["GET"])
 def api_channel_agents():
-    """Channel→agent assignments for the web UI (read-only).
+    """Channel→agent assignments for the web UI, plus the metadata the editor
+    needs (available AI providers, loadable extensions, channel names).
 
     Includes the legacy Home Assistant channel mapping for completeness.
     """
@@ -2129,7 +2136,75 @@ def api_channel_agents():
             and str(HOME_ASSISTANT_CHANNEL_INDEX) not in out:
         out[str(HOME_ASSISTANT_CHANNEL_INDEX)] = {
             "agent": "ai", "provider": "home_assistant", "legacy": True}
-    return jsonify({"channel_agents": out})
+    # Extensions that can act as channel agents (must be currently loaded).
+    ext_list = []
+    if extension_loader:
+        for slug, ext in extension_loader.loaded.items():
+            try:
+                ext_list.append({"slug": slug, "name": ext.name})
+            except Exception:
+                ext_list.append({"slug": slug, "name": slug})
+    return jsonify({
+        "channel_agents": out,
+        "providers": list(KNOWN_AI_PROVIDERS),
+        "current_provider": AI_PROVIDER,
+        "extensions": sorted(ext_list, key=lambda e: e["name"].lower()),
+        "channel_names": config.get("channel_names", {}) or {},
+    })
+
+@app.route("/api/channel_agents", methods=["POST", "PUT"])
+def api_channel_agents_save():
+    """Persist channel→agent assignments and apply them live (no restart).
+
+    Writes only the ``channel_agents`` key back into config.json (preserving
+    everything else) and updates the in-memory ``CHANNEL_AGENTS`` global so
+    routing reflects the change on the very next message.
+    """
+    global CHANNEL_AGENTS
+    try:
+        data = request.get_json(force=True) or {}
+        agents = data.get("channel_agents", data)
+        if not isinstance(agents, dict):
+            return jsonify({"message": "channel_agents must be a JSON object"}), 400
+        cleaned = {}
+        for ch, spec in agents.items():
+            if not isinstance(spec, dict):
+                continue
+            agent = (spec.get("agent") or "ai").lower()
+            if agent not in ("ai", "extension"):
+                continue
+            entry = {"agent": agent}
+            if agent == "ai":
+                prov = (spec.get("provider") or "").lower()
+                if prov not in KNOWN_AI_PROVIDERS:
+                    continue
+                entry["provider"] = prov
+            else:
+                slug = str(spec.get("slug") or "").strip()
+                if not slug:
+                    continue
+                entry["slug"] = slug
+                if spec.get("command"):
+                    entry["command"] = spec["command"]
+            if spec.get("require_pin"):
+                entry["require_pin"] = True
+            if spec.get("enabled") is False:
+                entry["enabled"] = False
+            cleaned[str(ch)] = entry
+        # Persist: read the on-disk config and update only channel_agents.
+        on_disk = safe_load_json(CONFIG_FILE, {})
+        if not isinstance(on_disk, dict):
+            on_disk = {}
+        on_disk["channel_agents"] = cleaned
+        _atomic_write_json(CONFIG_FILE, on_disk)
+        # Apply live.
+        CHANNEL_AGENTS = cleaned
+        config["channel_agents"] = cleaned
+        add_script_log(f"[WebUI] channel_agents updated ({len(cleaned)} assignment(s)).")
+        return jsonify({"status": "ok", "channel_agents": cleaned})
+    except Exception as e:
+        return jsonify({"message": str(e)}), 500
+
 
 # -----------------------------
 # v0.7.0: firmware / software update endpoints
@@ -4046,6 +4121,115 @@ def dashboard():
       } catch (e) { alert('Reload failed: ' + e.message); }
     }
 
+    // --- v0.7.2: Channel Agents (per-channel AI provider / extension routing) ---
+    let channelAgents = {};
+    let channelAgentMeta = { providers: [], extensions: [], channel_names: {}, current_provider: '' };
+
+    async function refreshChannelAgents() {
+      try {
+        const r = await fetch('/api/channel_agents');
+        const d = await r.json();
+        channelAgents = d.channel_agents || {};
+        channelAgentMeta = {
+          providers: d.providers || [],
+          extensions: d.extensions || [],
+          channel_names: d.channel_names || {},
+          current_provider: d.current_provider || ''
+        };
+        const modal = document.getElementById('channelAgentsModal');
+        if (modal && modal.style.display === 'flex') renderChannelAgentsEditor();
+      } catch (e) { /* non-fatal */ }
+    }
+
+    function openChannelAgentsModal() {
+      document.getElementById('channelAgentsModal').style.display = 'flex';
+      renderChannelAgentsEditor();
+      refreshChannelAgents();
+    }
+    function closeChannelAgentsModal() {
+      document.getElementById('channelAgentsModal').style.display = 'none';
+    }
+
+    function _agentChannelRows() {
+      const keys = new Set();
+      Object.keys(channelAgentMeta.channel_names || {}).forEach(k => keys.add(String(k)));
+      Object.keys(channelAgents || {}).forEach(k => keys.add(String(k)));
+      for (let i = 0; i < 8; i++) keys.add(String(i));
+      return Array.from(keys).sort((a, b) => Number(a) - Number(b));
+    }
+
+    function renderChannelAgentsEditor() {
+      const body = document.getElementById('channelAgentsBody');
+      if (!body) return;
+      const provs = channelAgentMeta.providers || [];
+      const exts = channelAgentMeta.extensions || [];
+      const names = channelAgentMeta.channel_names || {};
+      let html = '';
+      _agentChannelRows().forEach(ch => {
+        const a = channelAgents[ch] || null;
+        const type = a ? (a.agent || 'ai') : 'none';
+        const legacy = a && a.legacy;
+        const chName = names[ch] || ('Channel ' + ch);
+        const provOpts = provs.map(p =>
+          '<option value="' + p + '"' + (a && type === 'ai' && a.provider === p ? ' selected' : '') + '>' + p + '</option>'
+        ).join('');
+        const extOpts = exts.length
+          ? exts.map(e => '<option value="' + e.slug + '"' + (a && type === 'extension' && a.slug === e.slug ? ' selected' : '') + '>' + e.name + ' (' + e.slug + ')</option>').join('')
+          : '<option value="">(no extensions loaded)</option>';
+        html += '<div class="ca-row" data-ch="' + ch + '" style="display:flex;align-items:center;gap:14px;padding:8px 12px;border-bottom:1px solid #333;flex-wrap:wrap;">'
+          + '<span style="min-width:120px;font-weight:bold;color:var(--theme-color);">📻 ' + ch + ' – ' + chName + '</span>'
+          + '<select class="ca-type" onchange="_caTypeChanged(this)" style="min-width:120px;">'
+          + '<option value="none"' + (type === 'none' ? ' selected' : '') + '>— None —</option>'
+          + '<option value="ai"' + (type === 'ai' ? ' selected' : '') + '>AI Provider</option>'
+          + '<option value="extension"' + (type === 'extension' ? ' selected' : '') + '>Extension</option>'
+          + '</select>'
+          + '<span style="flex:1;min-width:160px;">'
+          + '<select class="ca-prov" style="width:100%;display:' + (type === 'ai' ? 'inline-block' : 'none') + ';">' + provOpts + '</select>'
+          + '<select class="ca-ext" style="width:100%;display:' + (type === 'extension' ? 'inline-block' : 'none') + ';">' + extOpts + '</select>'
+          + '</span>'
+          + '<label style="font-size:0.85em;color:#ccc;white-space:nowrap;"><input type="checkbox" class="ca-pin"' + (a && a.require_pin ? ' checked' : '') + '> 🔒 PIN</label>'
+          + (legacy ? '<span style="font-size:0.78em;color:#e6a;white-space:nowrap;">(from Home Assistant config)</span>' : '')
+          + '</div>';
+      });
+      body.innerHTML = html;
+    }
+
+    function _caTypeChanged(sel) {
+      const row = sel.closest('.ca-row');
+      const t = sel.value;
+      row.querySelector('.ca-prov').style.display = (t === 'ai') ? 'inline-block' : 'none';
+      row.querySelector('.ca-ext').style.display = (t === 'extension') ? 'inline-block' : 'none';
+    }
+
+    async function saveChannelAgents() {
+      const out = {};
+      document.querySelectorAll('#channelAgentsBody .ca-row').forEach(row => {
+        const ch = row.getAttribute('data-ch');
+        const t = row.querySelector('.ca-type').value;
+        if (t === 'ai') {
+          const p = row.querySelector('.ca-prov').value;
+          if (p) out[ch] = { agent: 'ai', provider: p };
+        } else if (t === 'extension') {
+          const s = row.querySelector('.ca-ext').value;
+          if (s) out[ch] = { agent: 'extension', slug: s };
+        }
+        if (out[ch] && row.querySelector('.ca-pin').checked) out[ch].require_pin = true;
+      });
+      try {
+        const r = await fetch('/api/channel_agents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ channel_agents: out })
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.message || 'Save failed');
+        channelAgents = j.channel_agents || out;
+        alert('Channel agents saved and applied live.');
+        renderChannelAgentsEditor();
+        if (typeof fetchMessagesAndNodes === 'function') fetchMessagesAndNodes();
+      } catch (e) { alert('Error saving: ' + e.message); }
+    }
+
     // Data fetch & UI updates
     let CHANNEL_NAMES = """ + json.dumps(channel_names) + """;
     // Override with UI-renamed channels from settings
@@ -4418,6 +4602,26 @@ def dashboard():
         const header = document.createElement("h3");
         header.innerHTML = `📻 ${ch} – ${name}` + (unreadCount > 0 ? ` <span style="background:var(--theme-color);color:#000;border-radius:10px;padding:1px 7px;font-size:0.8em;margin-left:6px;">${unreadCount}</span>` : '');
         headerWrap.appendChild(header);
+
+        // v0.7.2: badge the channel with its assigned Channel Agent (if any)
+        const _chAgent = channelAgents[String(ch)];
+        if (_chAgent) {
+          const ab = document.createElement("span");
+          ab.style.cssText = "margin-left:8px;font-size:0.72em;font-weight:bold;padding:1px 7px;border-radius:10px;background:#5b2a86;color:#fff;white-space:nowrap;";
+          let lbl, tip;
+          if ((_chAgent.agent || "ai") === "extension") {
+            lbl = "🧩 " + (_chAgent.slug || "ext");
+            tip = "This channel is routed to extension: " + (_chAgent.slug || "");
+          } else {
+            lbl = "🤖 " + (_chAgent.provider || "ai");
+            tip = "This channel is routed to AI provider: " + (_chAgent.provider || "");
+          }
+          if (_chAgent.require_pin) { lbl += " 🔒"; tip += " (PIN required)"; }
+          if (_chAgent.legacy) { tip += " (from Home Assistant config)"; }
+          ab.textContent = lbl;
+          ab.title = tip;
+          header.appendChild(ab);
+        }
 
         // Add reply button for channel
         const replyBtn = document.createElement("button");
@@ -5288,6 +5492,10 @@ def dashboard():
     setInterval(refreshUpdatesBadge, 60000);
     setTimeout(refreshUpdatesBadge, 4000);
 
+    // v0.7.2: keep channel-agent badges/editor fresh (assignments rarely change)
+    setTimeout(refreshChannelAgents, 1800);
+    setInterval(refreshChannelAgents, 30000);
+
     function openUpdatesModal() {
       document.getElementById('updatesModal').style.display = 'flex';
       if (_updatesData) renderUpdates(_updatesData);
@@ -5761,6 +5969,7 @@ def dashboard():
       <span class="suffix-chip" title="Current AI alias and suffix">""" + f"{AI_ALIAS_CANONICAL} (suffix: {AI_SUFFIX})" + """</span>
       <button type="button" onclick="openCommandsModal()">⌘ Commands</button>
       <button type="button" onclick="openExtensionsModal()">🧩 Extensions</button>
+      <button type="button" onclick="openChannelAgentsModal()" title="Assign AI providers or extensions to specific channels">🤖 Agents</button>
       <button type="button" onclick="openConfigModal()">⚙️ Config</button>
       <button type="button" id="updatesBtn" onclick="openUpdatesModal()" title="Check for Mesh-API / Meshtastic / MeshCore updates">🔄 Updates<span id="updatesBadge" style="display:none;margin-left:5px;background:#e53935;color:#fff;border-radius:10px;padding:0 7px;font-size:0.8em;font-weight:bold;"></span></button>
       <a href="/logs" target="_blank">📜 Logs</a>
@@ -5916,7 +6125,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.1 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -6260,6 +6469,39 @@ def dashboard():
       </div>
     </div>
   </div>
+
+  <div id="channelAgentsModal" class="modal-overlay" onclick="if(event.target===this) closeChannelAgentsModal()">
+    <div class="modal-content" style="max-width:900px;">
+      <div class="modal-header">
+        <h3>🤖 Channel Agents</h3>
+        <button class="modal-close" onclick="closeChannelAgentsModal()">Close</button>
+      </div>
+      <div class="modal-body">
+        <div style="color:#bbb; font-size:0.9em; margin-bottom:10px;">
+          Assign a channel to a specific <strong>AI provider</strong> or a loaded <strong>extension</strong>.
+          Plain-text (non-command) messages on an assigned channel are routed to that agent, bypassing the
+          global reply-in-channels setting. Slash commands still work everywhere. Changes apply <strong>live</strong> — no restart needed.
+        </div>
+        <div style="margin-bottom:10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <button class="reply-btn" onclick="refreshChannelAgents()">Refresh</button>
+          <button class="mark-read-btn" onclick="saveChannelAgents()">Save &amp; Apply</button>
+        </div>
+        <div style="border:1px solid var(--theme-color); border-radius:8px; overflow:hidden;">
+          <div style="background:#222; padding:8px 12px; border-bottom:1px solid var(--theme-color); display:flex; gap:14px; font-weight:bold; color:var(--theme-color); font-size:0.9em;">
+            <span style="min-width:120px;">Channel</span>
+            <span style="min-width:120px;">Agent Type</span>
+            <span style="flex:1;">Provider / Extension</span>
+            <span>PIN</span>
+          </div>
+          <div id="channelAgentsBody" style="max-height:50vh; overflow:auto;"></div>
+        </div>
+        <div style="margin-top:8px; color:#888; font-size:0.82em;">
+          Channels marked <span style="color:#e6a;">(from Home Assistant config)</span> come from the legacy
+          <code>home_assistant_channel_index</code> setting; saving here makes the assignment explicit.
+        </div>
+      </div>
+    </div>
+  </div>
   <div id="settingsOverlay" class="settings-overlay"></div>
   <div class="settings-panel" id="settingsPanel">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
@@ -6415,7 +6657,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.1 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>
