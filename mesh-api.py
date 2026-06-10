@@ -24,6 +24,7 @@ import platform
 import tempfile
 import shutil
 import errno
+import collections
 from twilio.rest import Client  # for Twilio SMS support
 from unidecode import unidecode   # Added unidecode import for Ollama text normalization
 from google.protobuf.message import DecodeError
@@ -189,7 +190,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.2.1 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.2.2 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -368,11 +369,9 @@ DEEPSEEK_TIMEOUT = config.get("deepseek_timeout", 60)
 MISTRAL_API_KEY = config.get("mistral_api_key", "")
 MISTRAL_MODEL = config.get("mistral_model", "mistral-small-latest")
 MISTRAL_TIMEOUT = config.get("mistral_timeout", 60)
-# Hermes (Nous Research) — OpenAI-compatible inference API
-HERMES_API_KEY = config.get("hermes_api_key", "")
-HERMES_URL = config.get("hermes_url", "https://inference-api.nousresearch.com/v1/chat/completions")
-HERMES_MODEL = config.get("hermes_model", "Hermes-4-405B")
-HERMES_TIMEOUT = config.get("hermes_timeout", 60)
+# NOTE: Hermes (Nous Research) is now provided by the bundled `hermes` extension
+# (extensions/hermes), not the core. It registers itself as the "hermes" AI
+# provider via the extension AI-provider mechanism.
 OPENAI_COMPAT_API_KEY = config.get("openai_compatible_api_key", "")
 OPENAI_COMPAT_URL = config.get("openai_compatible_url", "")
 OPENAI_COMPAT_MODEL = config.get("openai_compatible_model", "")
@@ -393,12 +392,25 @@ HOME_ASSISTANT_CHANNEL_INDEX = int(config.get("home_assistant_channel_index", -1
 #     "7": {"agent": "extension", "slug": "openclaw"},
 #     "8": {"agent": "ai", "provider": "home_assistant", "require_pin": true} }
 CHANNEL_AGENTS = config.get("channel_agents", {}) or {}
-# Canonical list of AI providers selectable as a channel agent (mirrors the
-# dispatch map in get_ai_response). Surfaced to the WebUI Channel Agents editor.
+# Canonical list of *core* AI providers selectable as a channel agent (mirrors the
+# dispatch map in get_ai_response). Extension-supplied providers (e.g. the bundled
+# `hermes` extension) are added dynamically — see available_ai_providers().
 KNOWN_AI_PROVIDERS = (
     "lmstudio", "openai", "ollama", "claude", "gemini", "grok", "openrouter",
-    "groq", "deepseek", "mistral", "hermes", "openai_compatible", "home_assistant",
+    "groq", "deepseek", "mistral", "openai_compatible", "home_assistant",
 )
+
+
+def available_ai_providers():
+    """Core providers plus any loaded extension that registers itself as an AI
+    provider (via ``ai_provider_name``), e.g. the bundled Hermes extension."""
+    provs = list(KNOWN_AI_PROVIDERS)
+    if extension_loader:
+        for ext in getattr(extension_loader, "loaded", {}).values():
+            name = getattr(ext, "ai_provider_name", None)
+            if name and name not in provs:
+                provs.append(name)
+    return provs
 MAX_CHUNK_SIZE = config.get("chunk_size", 200)
 MAX_CHUNKS = int(config.get("max_ai_chunks", 5))
 CHUNK_DELAY = config.get("chunk_delay", 10)
@@ -520,6 +532,18 @@ MOTD_COMMAND = f"/motd-{AI_SUFFIX}"
 app = Flask(__name__)
 messages = []
 interface = None
+# v0.7.2.2: real-time mesh traffic monitor. Each event is (epoch_seconds, network,
+# direction) where direction is "rx" or "tx". Bounded ring buffer (~last few minutes).
+traffic_events = collections.deque(maxlen=8000)
+
+
+def record_traffic(network="meshtastic", direction="rx"):
+    """Record a single mesh radio traffic event for the WebUI traffic monitor."""
+    try:
+        traffic_events.append((time.time(), network, direction))
+    except Exception:
+        pass
+
 # v0.7.0: core-owned MeshCore radio manager (set up in main()).
 meshcore_manager = None
 # v0.7.0: MCP server (set up in main()).
@@ -899,6 +923,7 @@ def send_broadcast_chunks(interface, text, channelIndex):
             break
         else:
             info_print(f"[Info] Successfully sent chunk {i+1}/{len(chunks)} on ch={channelIndex}.")
+            record_traffic("meshtastic", "tx")
 
 def send_direct_chunks(interface, text, destinationId):
     dprint(f"send_direct_chunks: text='{text}', destId={destinationId}")
@@ -929,6 +954,7 @@ def send_direct_chunks(interface, text, destinationId):
             break
         else:
             info_print(f"[Info] Direct chunk {i+1}/{len(chunks)} to {destinationId} sent.")
+            record_traffic("meshtastic", "tx")
 
 def send_to_lmstudio(user_message: str):
     """Chat/completion request to LM Studio with explicit model name."""
@@ -1225,15 +1251,6 @@ def send_to_mistral(user_message):
         user_message, "Mistral", MISTRAL_API_KEY,
         "https://api.mistral.ai/v1/chat/completions", MISTRAL_MODEL, MISTRAL_TIMEOUT)
 
-def send_to_hermes(user_message):
-    """Nous Research Hermes models via their OpenAI-compatible inference API."""
-    if not HERMES_API_KEY:
-        print("⚠️ No Hermes (Nous Research) API key configured.")
-        return None
-    return _send_to_openai_compatible(
-        user_message, "Hermes", HERMES_API_KEY,
-        HERMES_URL, HERMES_MODEL, HERMES_TIMEOUT)
-
 def send_to_openai_compatible(user_message):
     if not OPENAI_COMPAT_URL:
         print("⚠️ No openai_compatible_url configured.")
@@ -1293,8 +1310,6 @@ def get_ai_response(prompt, provider=None):
         return send_to_deepseek(prompt)
     elif prov == "mistral":
         return send_to_mistral(prompt)
-    elif prov == "hermes":
-        return send_to_hermes(prompt)
     elif prov == "openai_compatible":
         return send_to_openai_compatible(prompt)
     elif prov == "home_assistant":
@@ -1305,6 +1320,12 @@ def get_ai_response(prompt, provider=None):
                 return ha_ext.get_ai_response(prompt)
         return send_to_home_assistant(prompt)
     else:
+        # Extension-supplied AI providers (e.g. the bundled Hermes extension)
+        # register via ``ai_provider_name``; route to them generically.
+        if extension_loader:
+            ext = extension_loader.get_ai_provider(prov)
+            if ext:
+                return ext.get_ai_response(prompt)
         print(f"⚠️ Unknown AI provider: {prov}")
         return None
 
@@ -1746,6 +1767,7 @@ def dispatch_response(network, text, is_direct, dest, channel_idx, reply_target=
                 meshcore_manager.send_dm(dest.replace("!mc-", ""), text)
             else:
                 meshcore_manager.send_channel(int(channel_idx or 0), text)
+            record_traffic("meshcore", "tx")
         if network == "meshcore":
             return
     # Meshtastic (also the second leg of "both")
@@ -1893,6 +1915,7 @@ def handle_meshcore_inbound(network, sender_id, sender_name, text, is_direct, ch
         if text in _bridge_recent:
             # This is our own bridged echo coming back; log nothing, do nothing.
             return
+        record_traffic("meshcore", "rx")
         entry = log_message(
             sender_id, text,
             direct=is_direct,
@@ -1932,6 +1955,7 @@ def on_receive(packet=None, interface=None, **kwargs):
     raw_to = packet.get('toId', None)
     to_node_int = parse_node_id(raw_to)
     ch_idx = packet.get('channel', 0)
+    record_traffic("meshtastic", "rx")
 
     # MQTT gating: ignore MQTT-originated traffic if configured to do so
     via_mqtt = bool(packet.get('viaMqtt') or packet.get('rxViaMqtt') or packet.get('decoded', {}).get('viaMqtt'))
@@ -2061,6 +2085,46 @@ def api_networks():
         "default_send_network": DEFAULT_SEND_NETWORK,
     })
 
+@app.route("/api/traffic", methods=["GET"])
+def api_traffic():
+    """Real-time mesh radio traffic, bucketed for the WebUI traffic monitor.
+
+    Returns per-second rx/tx counts over a sliding window (default 60s), plus
+    rolling totals, so the dashboard can draw a green→red activity graph.
+    """
+    try:
+        window = int(request.args.get("seconds", 60))
+    except (TypeError, ValueError):
+        window = 60
+    window = max(10, min(window, 180))
+    now = time.time()
+    start = now - window
+    rx = [0] * window
+    tx = [0] * window
+    total_rx = 0
+    total_tx = 0
+    for ts, _net, direction in list(traffic_events):
+        if ts < start:
+            continue
+        idx = int(ts - start)
+        if idx < 0 or idx >= window:
+            continue
+        if direction == "tx":
+            tx[idx] += 1
+            total_tx += 1
+        else:
+            rx[idx] += 1
+            total_rx += 1
+    peak = max([0] + rx + tx)
+    return jsonify({
+        "seconds": window,
+        "rx": rx,
+        "tx": tx,
+        "total_rx": total_rx,
+        "total_tx": total_tx,
+        "peak": peak,
+    })
+
 @app.route("/api/meshcore/channels", methods=["GET"])
 def api_meshcore_channels():
     """MeshCore channels (group chats / private channels) for the send UI."""
@@ -2146,7 +2210,7 @@ def api_channel_agents():
                 ext_list.append({"slug": slug, "name": slug})
     return jsonify({
         "channel_agents": out,
-        "providers": list(KNOWN_AI_PROVIDERS),
+        "providers": available_ai_providers(),
         "current_provider": AI_PROVIDER,
         "extensions": sorted(ext_list, key=lambda e: e["name"].lower()),
         "channel_names": config.get("channel_names", {}) or {},
@@ -2176,7 +2240,7 @@ def api_channel_agents_save():
             entry = {"agent": agent}
             if agent == "ai":
                 prov = (spec.get("provider") or "").lower()
-                if prov not in KNOWN_AI_PROVIDERS:
+                if prov not in available_ai_providers():
                     continue
                 entry["provider"] = prov
             else:
@@ -2710,9 +2774,23 @@ def dashboard():
   .masthead-actions button { background: #222; color: var(--theme-color); padding: 8px 12px; border:1px solid var(--theme-color); border-radius: 4px; font-weight: bold; cursor:pointer; font-size: 0.95em; }
   .masthead-actions a { background: var(--theme-color); color: #000; padding: 8px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 0.95em; border: 1px solid var(--theme-color); }
   .masthead-actions button:hover, .masthead-actions a:hover { filter: brightness(0.9); }
+  /* v0.7.2.2: emergency alert flashing box (sits between logo and actions) */
+  #emergencyAlertBox { flex: 1 1 auto; max-width: 420px; margin: 0 auto; text-align: center; cursor: pointer;
+    background: #b00000; color: #fff; border: 3px solid #ff5252; border-radius: 10px; padding: 10px 16px;
+    box-shadow: 0 0 18px 4px rgba(255,0,0,0.6); animation: emrgFlash 1s steps(1,end) infinite; user-select: none; }
+  #emergencyAlertBox .emrg-icon { font-size: 1.5em; vertical-align: middle; margin-right: 8px; }
+  #emergencyAlertBox .emrg-text { font-size: 1.15em; font-weight: 900; letter-spacing: 1px; vertical-align: middle; }
+  #emergencyAlertBox #emergencyAlertCount { margin-left: 6px; }
+  #emergencyAlertBox .emrg-sub { display: block; font-size: 0.72em; opacity: 0.9; margin-top: 2px; }
+  @keyframes emrgFlash {
+    0%   { background: #b00000; box-shadow: 0 0 18px 4px rgba(255,0,0,0.6); }
+    50%  { background: #ff1a1a; box-shadow: 0 0 28px 10px rgba(255,0,0,0.95); }
+    100% { background: #b00000; box-shadow: 0 0 18px 4px rgba(255,0,0,0.6); }
+  }
   @media (max-width: 768px) {
     .masthead { flex-direction: column; align-items: flex-start; }
     .masthead-actions { width: 100%; justify-content: flex-start; }
+    #emergencyAlertBox { width: 100%; max-width: none; }
   }
   /* Content flows naturally; no offset needed */
   #appRoot { padding-top: 0; }
@@ -3905,6 +3983,7 @@ def dashboard():
       });
     }
     const SECTION_LABELS = {
+      trafficMonitor: '📊 Traffic Monitor',
       nodeMapPanel: '🗺️ Node Map',
       sendForm: '✉️ Send a Message',
       threeCol: '💬 Message Panels',
@@ -4312,6 +4391,7 @@ def dashboard():
         showLatestMessageTicker(msgs);
         updateDiscordMessagesUI(msgs);
         updateNodeMap();
+        refreshEmergencyAlerts();
       } catch (e) { console.error(e); }
     }
 
@@ -4442,11 +4522,6 @@ def dashboard():
         else if (p === 'openai_compatible') { setCfgVal('cfg_openai_compatible_url', cfg.openai_compatible_url); setCfgVal('cfg_openai_compatible_api_key', cfg.openai_compatible_api_key); setCfgVal('cfg_openai_compatible_model', cfg.openai_compatible_model); setCfgVal('cfg_openai_compatible_timeout', cfg.openai_compatible_timeout); }
         else { setCfgVal('cfg_'+p+'_api_key', cfg[p+'_api_key']); setCfgVal('cfg_'+p+'_model', cfg[p+'_model']); setCfgVal('cfg_'+p+'_timeout', cfg[p+'_timeout']); }
       });
-      // Hermes (v0.7.0) AI provider
-      setCfgVal('cfg_hermes_api_key', cfg.hermes_api_key);
-      setCfgVal('cfg_hermes_url', cfg.hermes_url);
-      setCfgVal('cfg_hermes_model', cfg.hermes_model);
-      setCfgVal('cfg_hermes_timeout', cfg.hermes_timeout);
       // Home Assistant AI provider
       setCfgVal('cfg_home_assistant_url', cfg.home_assistant_url);
       setCfgVal('cfg_home_assistant_token', cfg.home_assistant_token);
@@ -4541,11 +4616,6 @@ def dashboard():
         else if (p === 'openai_compatible') { cfg.openai_compatible_url = cfgVal('cfg_openai_compatible_url'); cfg.openai_compatible_api_key = cfgVal('cfg_openai_compatible_api_key'); cfg.openai_compatible_model = cfgVal('cfg_openai_compatible_model'); cfg.openai_compatible_timeout = cfgVal('cfg_openai_compatible_timeout'); }
         else { cfg[p+'_api_key'] = cfgVal('cfg_'+p+'_api_key'); cfg[p+'_model'] = cfgVal('cfg_'+p+'_model'); cfg[p+'_timeout'] = cfgVal('cfg_'+p+'_timeout'); }
       });
-      // Hermes (v0.7.0)
-      cfg.hermes_api_key = cfgVal('cfg_hermes_api_key');
-      cfg.hermes_url = cfgVal('cfg_hermes_url');
-      cfg.hermes_model = cfgVal('cfg_hermes_model');
-      cfg.hermes_timeout = cfgVal('cfg_hermes_timeout');
       // Home Assistant
       cfg.home_assistant_url = cfgVal('cfg_home_assistant_url');
       cfg.home_assistant_token = cfgVal('cfg_home_assistant_token');
@@ -5589,6 +5659,188 @@ def dashboard():
     setTimeout(refreshChannelAgents, 1800);
     setInterval(refreshChannelAgents, 30000);
 
+    // v0.7.2.2: real-time mesh traffic monitor (green->red activity graph)
+    function drawTraffic(d) {
+      const canvas = document.getElementById('trafficCanvas');
+      if (!canvas) return;
+      const rxArr = d.rx || [], txArr = d.tx || [];
+      const n = Math.max(rxArr.length, txArr.length, 1);
+      // Crisp rendering: match the backing store to the displayed size.
+      const cssW = canvas.clientWidth || 600;
+      const cssH = canvas.clientHeight || 90;
+      const dpr = window.devicePixelRatio || 1;
+      if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+        canvas.width = Math.round(cssW * dpr);
+        canvas.height = Math.round(cssH * dpr);
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssW, cssH);
+      const peak = Math.max(1, d.peak || 1);
+      const slot = cssW / n;
+      const barW = Math.max(1, slot * 0.7);
+      // Color ramp green (low) -> yellow -> red (high) by intensity.
+      function rampColor(frac) {
+        frac = Math.max(0, Math.min(1, frac));
+        let r, g;
+        if (frac < 0.5) { r = Math.round(510 * frac); g = 200; }
+        else { r = 255; g = Math.round(200 - 200 * (frac - 0.5) * 2); }
+        return 'rgb(' + r + ',' + g + ',60)';
+      }
+      for (let i = 0; i < n; i++) {
+        const rx = rxArr[i] || 0, tx = txArr[i] || 0;
+        const total = rx + tx;
+        if (total <= 0) continue;
+        const frac = total / peak;
+        const h = Math.max(2, frac * (cssH - 6));
+        const x = i * slot + (slot - barW) / 2;
+        ctx.fillStyle = rampColor(frac);
+        ctx.fillRect(x, cssH - h, barW, h);
+        // thin TX marker on top portion (amber) so direction is visible
+        if (tx > 0) {
+          const txh = Math.max(1, (tx / Math.max(total, 1)) * h);
+          ctx.fillStyle = 'rgba(255,179,0,0.85)';
+          ctx.fillRect(x, cssH - h, barW, Math.min(txh, 3));
+        }
+      }
+      const stats = document.getElementById('trafficStats');
+      if (stats) stats.textContent = '▾' + (d.total_rx || 0) + ' rx  ▴' + (d.total_tx || 0) + ' tx (60s)';
+    }
+    function fetchTraffic() {
+      const sec = document.querySelector('#sortableContainer [data-section="trafficMonitor"]');
+      if (sec && sec.style.display === 'none') return; // skip when hidden
+      fetch('/api/traffic?seconds=60').then(r => r.json()).then(drawTraffic).catch(() => {});
+    }
+    setTimeout(fetchTraffic, 1000);
+    setInterval(fetchTraffic, 3000);
+    window.addEventListener('resize', function() { setTimeout(fetchTraffic, 150); });
+
+    // v0.7.2.2: emergency alert flashing box + modal (must be cleared by the user)
+    function getClearedEmergencies() {
+      try { return JSON.parse(localStorage.getItem('clearedEmergencies') || '[]'); }
+      catch (e) { return []; }
+    }
+    function saveClearedEmergencies(arr) {
+      localStorage.setItem('clearedEmergencies', JSON.stringify(arr.slice(-300)));
+    }
+    function activeEmergencies() {
+      const cleared = getClearedEmergencies();
+      return (allMessages || []).filter(m => m && m.emergency === true && !cleared.includes(m.timestamp));
+    }
+    function refreshEmergencyAlerts() {
+      const box = document.getElementById('emergencyAlertBox');
+      if (!box) return;
+      const active = activeEmergencies();
+      if (active.length > 0) {
+        box.style.display = '';
+        const cnt = document.getElementById('emergencyAlertCount');
+        if (cnt) cnt.textContent = active.length > 1 ? ' (' + active.length + ')' : '';
+        // Audible cue on a newly-seen emergency
+        if (active.length > (window._lastEmergencyCount || 0)) {
+          try { playIncomingSound(true, null); } catch (e) {}
+        }
+        // If the modal is open, refresh it live
+        const modal = document.getElementById('emergencyModal');
+        if (modal && modal.style.display === 'flex') renderEmergencyList(active);
+      } else {
+        box.style.display = 'none';
+        const modal = document.getElementById('emergencyModal');
+        if (modal && modal.style.display === 'flex') closeEmergencyModal();
+      }
+      window._lastEmergencyCount = active.length;
+    }
+    function renderEmergencyList(active) {
+      const list = document.getElementById('emergencyList');
+      if (!list) return;
+      list.innerHTML = '';
+      if (!active.length) {
+        list.innerHTML = '<div style="color:#888;">No active emergency alerts.</div>';
+        return;
+      }
+      active.slice().reverse().forEach(m => {
+        const nid = m.node_id != null ? String(m.node_id) : '';
+        const node = (allNodes || []).find(n => String(n.id) === nid);
+        const card = document.createElement('div');
+        card.style.cssText = 'border:1px solid #ff5252;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#1a0a0a;';
+
+        const net = m.network ? (m.network === 'meshcore' ? 'MeshCore' : (m.network === 'both' ? 'Both' : 'Meshtastic')) : '';
+        const hdr = document.createElement('div');
+        hdr.style.cssText = 'font-weight:bold;color:#ff8a8a;';
+        hdr.textContent = '🚨 ' + getTZAdjusted(m.timestamp) + (net ? ' · ' + net : '');
+        card.appendChild(hdr);
+
+        const body = document.createElement('div');
+        body.style.cssText = 'margin:4px 0;color:#fff;font-size:1.05em;';
+        const who = document.createElement('strong');
+        who.textContent = m.node ? (m.node + ': ') : '';
+        body.appendChild(who);
+        body.appendChild(document.createTextNode(m.message || ''));
+        card.appendChild(body);
+
+        // Node information line
+        const infoParts = [];
+        if (node) {
+          if (node.longName) infoParts.push('Name: ' + node.longName);
+          if (node.shortName) infoParts.push('Short: ' + node.shortName);
+        }
+        if (nid) infoParts.push('ID: ' + nid);
+        if (node && node.hops != null) infoParts.push('Hops: ' + node.hops);
+        if (infoParts.length) {
+          const info = document.createElement('div');
+          info.style.cssText = 'color:#bbb;font-size:0.85em;';
+          info.textContent = infoParts.join(' · ');
+          card.appendChild(info);
+        }
+
+        // Action buttons (built with addEventListener — no inline-quote pitfalls)
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;';
+        if (nid) {
+          const replyBtn = document.createElement('button');
+          replyBtn.className = 'reply-btn';
+          replyBtn.textContent = 'Reply';
+          replyBtn.addEventListener('click', () => dmToNode(nid, (node && node.shortName) ? node.shortName : nid));
+          btnRow.appendChild(replyBtn);
+          const mapBtn = document.createElement('button');
+          mapBtn.className = 'reply-btn';
+          mapBtn.textContent = 'Show on Map';
+          mapBtn.addEventListener('click', () => flyToNode(nid));
+          btnRow.appendChild(mapBtn);
+        }
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'mark-read-btn';
+        clearBtn.textContent = '✓ Clear this alert';
+        clearBtn.addEventListener('click', () => clearEmergency(m.timestamp));
+        btnRow.appendChild(clearBtn);
+        card.appendChild(btnRow);
+
+        list.appendChild(card);
+      });
+    }
+    function openEmergencyModal() {
+      const modal = document.getElementById('emergencyModal');
+      if (!modal) return;
+      renderEmergencyList(activeEmergencies());
+      modal.style.display = 'flex';
+    }
+    function closeEmergencyModal() {
+      const modal = document.getElementById('emergencyModal');
+      if (modal) modal.style.display = 'none';
+    }
+    function clearEmergency(ts) {
+      const cleared = getClearedEmergencies();
+      if (!cleared.includes(ts)) cleared.push(ts);
+      saveClearedEmergencies(cleared);
+      refreshEmergencyAlerts();
+    }
+    function clearAllEmergencies() {
+      const cleared = getClearedEmergencies();
+      activeEmergencies().forEach(m => { if (!cleared.includes(m.timestamp)) cleared.push(m.timestamp); });
+      saveClearedEmergencies(cleared);
+      refreshEmergencyAlerts();
+      closeEmergencyModal();
+    }
+
     function openUpdatesModal() {
       document.getElementById('updatesModal').style.display = 'flex';
       if (_updatesData) renderUpdates(_updatesData);
@@ -6058,6 +6310,11 @@ def dashboard():
       <a href="https://mesh-api.dev" target="_blank" style="display:inline-block;"><img id="mastheadLogo" src="https://mr-tbot.com/wp-content/uploads/2026/02/MESH-API.png" alt="MESH-API Logo" loading="lazy"></a>
       <span class="logo-overlay"></span>
     </span>
+    <div id="emergencyAlertBox" onclick="openEmergencyModal()" title="Emergency alert — click to view details" style="display:none;">
+      <span class="emrg-icon">🚨</span>
+      <span class="emrg-text">EMERGENCY ALERT<span id="emergencyAlertCount"></span></span>
+      <span class="emrg-sub">click to view</span>
+    </div>
     <div class="masthead-actions">
       <span class="suffix-chip" title="Current AI alias and suffix">""" + f"{AI_ALIAS_CANONICAL} (suffix: {AI_SUFFIX})" + """</span>
       <button type="button" onclick="openCommandsModal()">⌘ Commands</button>
@@ -6070,6 +6327,22 @@ def dashboard():
   </div>
 
   <div id="sortableContainer">
+  <div data-section="trafficMonitor">
+  <div class="lcars-panel" id="trafficMonitorPanel">
+    <div class="panel-title-row">
+      <h2><span class="drag-handle" title="Drag to reorder">&#x2630;</span> 📊 Traffic Monitor <span id="trafficStats" style="font-size:0.6em;color:#888;font-weight:normal;margin-left:8px;"></span></h2>
+      <div><button class="section-hide-btn" onclick="hideSection('trafficMonitor')" title="Hide this section">✕</button></div>
+    </div>
+    <div class="panel-body" style="padding:6px 10px 10px;">
+      <canvas id="trafficCanvas" height="90" style="width:100%;height:90px;display:block;background:#0a0a0a;border-radius:6px;"></canvas>
+      <div style="display:flex;gap:14px;margin-top:6px;font-size:0.78em;color:#aaa;flex-wrap:wrap;">
+        <span><span style="display:inline-block;width:10px;height:10px;background:#1e88e5;border-radius:2px;margin-right:4px;"></span>RX (received)</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#ffb300;border-radius:2px;margin-right:4px;"></span>TX (sent)</span>
+        <span style="margin-left:auto;color:#666;">green = light · red = heavy traffic · last 60s</span>
+      </div>
+    </div>
+  </div>
+  </div>
   <div data-section="nodeMapPanel">
   <div class="lcars-panel" id="nodeMapPanel">
     <div class="panel-title-row">
@@ -6218,7 +6491,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2.1 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.2.2 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -6341,7 +6614,6 @@ def dashboard():
                   <option value="groq">Groq</option>
                   <option value="deepseek">DeepSeek</option>
                   <option value="mistral">Mistral</option>
-                  <option value="hermes">Hermes (Nous Research)</option>
                   <option value="openai_compatible">OpenAI Compatible</option>
                   <option value="home_assistant">Home Assistant</option>
                 </select>
@@ -6408,13 +6680,6 @@ def dashboard():
                 <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_mistral_api_key"></div>
                 <div class="cfg-field"><label>Model</label><input type="text" id="cfg_mistral_model" placeholder="mistral-small-latest"></div>
                 <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_mistral_timeout"></div>
-              </div></div>
-              <!-- Hermes (Nous Research) -->
-              <div id="ai_sec_hermes" class="ai-provider-section"><div class="cfg-section-body">
-                <div class="cfg-field"><label>API Key</label><input type="password" id="cfg_hermes_api_key"></div>
-                <div class="cfg-field full"><label>API URL</label><input type="text" id="cfg_hermes_url" placeholder="https://inference-api.nousresearch.com/v1/chat/completions"></div>
-                <div class="cfg-field"><label>Model</label><input type="text" id="cfg_hermes_model" placeholder="Hermes-4-405B"></div>
-                <div class="cfg-field"><label>Timeout (sec)</label><input type="number" id="cfg_hermes_timeout"></div>
               </div></div>
               <!-- Home Assistant (AI provider) -->
               <div id="ai_sec_home_assistant" class="ai-provider-section"><div class="cfg-section-body">
@@ -6676,6 +6941,26 @@ def dashboard():
       </div>
     </div>
   </div>
+
+  <div id="emergencyModal" class="modal-overlay" onclick="if(event.target===this) closeEmergencyModal()">
+    <div class="modal-content" style="max-width:760px; border:3px solid #ff5252;">
+      <div class="modal-header" style="background:#b00000;">
+        <h3 style="color:#fff;">🚨 Emergency Alerts</h3>
+        <button class="modal-close" onclick="closeEmergencyModal()">Close</button>
+      </div>
+      <div class="modal-body">
+        <div style="color:#ffcaca; font-size:0.9em; margin-bottom:10px;">
+          One or more nodes triggered an <strong>/emergency</strong> alert. Review the details below.
+          Alerts must be cleared manually.
+        </div>
+        <div id="emergencyList" style="max-height:55vh; overflow:auto;"></div>
+        <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="mark-read-btn" style="background:#b00000;color:#fff;border-color:#ff5252;" onclick="clearAllEmergencies()">✓ Clear All Alerts</button>
+          <button class="reply-btn" onclick="closeEmergencyModal()">Close (keep alerts)</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <div id="settingsOverlay" class="settings-overlay"></div>
   <div class="settings-panel" id="settingsPanel">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
@@ -6831,7 +7116,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2.1 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.2.2 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>

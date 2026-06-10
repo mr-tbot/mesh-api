@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "api_key": "",
+  "url": "https://inference-api.nousresearch.com/v1/chat/completions",
+  "model": "Hermes-4-405B",
+  "timeout": 60
+}
