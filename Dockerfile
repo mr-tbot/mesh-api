@@ -19,6 +19,9 @@ RUN pip install --no-cache-dir --upgrade \
 # ------------------------------------------------------------
 WORKDIR /app
 COPY mesh-api.py .
+COPY meshcore_core.py .
+COPY mcp_server.py .
+COPY firmware_updater.py .
 COPY requirements.txt .
 COPY config.json .
 COPY commands_config.json .
