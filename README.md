@@ -1,4 +1,4 @@
-# MESH-API v0.7.3.6 Beta — Meshtastic + MeshCore Mesh Router & AI Bridge
+# MESH-API v0.7.3.6 Beta — Meshtastic + MeshCore Mesh Router & API/AI Bridge
 
 > ## 🎉 Now with full MeshCore support (since v0.7.0)
 >
