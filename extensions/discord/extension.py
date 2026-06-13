@@ -203,13 +203,20 @@ class DiscordExtension(BaseExtension):
                     log_fn("Discord", formatted_message, direct=False,
                            channel_idx=int(channel_index) if channel_index is not None else 0)
 
-                iface = ext.app_context.get("interface")
-                if iface is None:
-                    ext.log("❌ Cannot route Discord message: interface is None.")
+                # Route to every active radio (Meshtastic + MeshCore) via the
+                # network-agnostic web_send helper; fall back to Meshtastic-only.
+                web_send = ext.app_context.get("web_send")
+                if web_send and channel_index is not None:
+                    web_send(formatted_message, "auto", "broadcast",
+                             channel_idx=int(channel_index))
                 else:
-                    send_fn = ext.app_context.get("send_broadcast_chunks")
-                    if send_fn and channel_index is not None:
-                        send_fn(iface, formatted_message, int(channel_index))
+                    iface = ext.app_context.get("interface")
+                    if iface is None:
+                        ext.log("❌ Cannot route Discord message: interface is None.")
+                    else:
+                        send_fn = ext.app_context.get("send_broadcast_chunks")
+                        if send_fn and channel_index is not None:
+                            send_fn(iface, formatted_message, int(channel_index))
 
                 ext.log(f"✅ Routed Discord message on channel {channel_index}")
                 return jsonify({"status": "sent",
@@ -261,16 +268,23 @@ class DiscordExtension(BaseExtension):
                                 log_fn("DiscordPoll", formatted,
                                        direct=False,
                                        channel_idx=self.inbound_channel_index)
-                            iface = self.app_context.get("interface")
-                            if iface is None:
-                                self.log("❌ Cannot send polled Discord "
-                                         "message: interface is None.")
+                            # Route to every active radio (Meshtastic +
+                            # MeshCore) via web_send; fall back to MT-only.
+                            web_send = self.app_context.get("web_send")
+                            if web_send and self.inbound_channel_index is not None:
+                                web_send(formatted, "auto", "broadcast",
+                                         channel_idx=int(self.inbound_channel_index))
                             else:
-                                send_fn = self.app_context.get(
-                                    "send_broadcast_chunks")
-                                if send_fn and self.inbound_channel_index is not None:
-                                    send_fn(iface, formatted,
-                                            self.inbound_channel_index)
+                                iface = self.app_context.get("interface")
+                                if iface is None:
+                                    self.log("❌ Cannot send polled Discord "
+                                             "message: interface is None.")
+                                else:
+                                    send_fn = self.app_context.get(
+                                        "send_broadcast_chunks")
+                                    if send_fn and self.inbound_channel_index is not None:
+                                        send_fn(iface, formatted,
+                                                self.inbound_channel_index)
                             self.log(f"Polled and routed Discord message: "
                                      f"{formatted}")
                             last_message_id = msg["id"]

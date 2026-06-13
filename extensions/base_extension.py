@@ -215,10 +215,14 @@ class BaseExtension(ABC):
 
     def send_to_mesh(self, text: str, channel_index: int | None = None,
                      destination_id: str | None = None) -> None:
-        """Send a message back to the mesh network.
+        """Send a message back to the mesh network(s).
 
-        Proxies to the core ``send_broadcast_chunks`` or
-        ``send_direct_chunks`` functions via ``app_context``.
+        Routes through the core network-agnostic ``web_send`` helper when
+        available (MESH-API v0.7.0+) so the message reaches *every* active
+        radio — Meshtastic **and** MeshCore — according to the configured
+        ``default_send_network`` (``"auto"`` = whichever radios are
+        connected). Falls back to the legacy Meshtastic-only path on older
+        cores that do not expose ``web_send``.
 
         Parameters
         ----------
@@ -230,6 +234,23 @@ class BaseExtension(ABC):
         destination_id : str, optional
             Node ID for a direct message.
         """
+        # Preferred path (v0.7.0+): network-agnostic send that fans out to
+        # both Meshtastic and MeshCore. This is what lets every extension
+        # (Telegram, Discord, alerts, etc.) reach MeshCore, not just
+        # Meshtastic.
+        web_send = self.app_context.get("web_send")
+        if web_send:
+            try:
+                if destination_id:
+                    web_send(text, "auto", "direct", dest_node=destination_id)
+                else:
+                    web_send(text, "auto", "broadcast",
+                             channel_idx=channel_index or 0)
+                return
+            except Exception as exc:
+                self.log(f"web_send failed, falling back to Meshtastic-only: {exc}")
+
+        # Legacy fallback: Meshtastic interface only.
         iface = self.app_context.get("interface")
         if iface is None:
             self.log("Cannot send to mesh: interface is None.")

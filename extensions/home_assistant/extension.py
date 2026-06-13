@@ -193,6 +193,12 @@ class HomeAssistantExtension(BaseExtension):
             log_fn(ai_name, text)
 
         ch_idx = metadata.get("channel_idx", 0)
+        # Route to every active radio (Meshtastic + MeshCore) via the
+        # network-agnostic web_send helper; fall back to Meshtastic-only.
+        web_send = self.app_context.get("web_send")
+        if web_send:
+            web_send(text, "auto", "broadcast", channel_idx=int(ch_idx or 0))
+            return
         iface = self.app_context.get("interface")
         if iface is None:
             self.log("Cannot reply: interface is None.")
