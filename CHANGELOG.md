@@ -8,6 +8,7 @@ setup, see [README.md](README.md). For the built-in extension reference, see
 
 ## Release Summaries (v0.6.0 → present)
 
+- **v0.7.4 Beta** — 🧙 **Setup Wizard now covers MeshCore.** The first-start (and re-runnable) **Setup Wizard** was brought up to date with the v0.7.x multi-radio architecture. It now has a dedicated **🟣 MeshCore Radio** step (enable MeshCore, choose **serial / TCP / BLE**, set the port/host/address, toggle **adverts** and **channel bridging**), a checkbox on the Meshtastic step to run a **MeshCore-only / standalone node** (`meshtastic_enabled`), and a **Default Send Network** selector (`auto` / Meshtastic / MeshCore / both) on the node-identity step. The wizard pre-populates every field from the existing `config.json`, so a fresh install can be fully configured for either or both radios without hand-editing JSON.
 - **v0.7.3.7 Beta** — 🟣 **All extensions now route to MeshCore (bug fix).** Messages and AI replies sent to the mesh from **any** extension — Telegram, Discord, Home Assistant, the alert feeds, MQTT, Matrix, n8n, and the rest — now reach **every connected radio (Meshtastic *and* MeshCore)**, not just Meshtastic. Previously the shared `send_to_mesh()` helper (and a couple of extensions that sent directly) only used the Meshtastic interface, so e.g. a Telegram message arrived on Meshtastic but never on MeshCore (GitHub [#59](https://github.com/mr-tbot/mesh-api/issues/59)). Extension outbound now flows through the core network-agnostic `web_send` path, fanning out per the `default_send_network` setting (`auto` = whichever radios are connected). No config or extension changes required.
 - **v0.7.3.6 Beta** — 💓 **AI endpoint heartbeat (token-free connection status).** Each **named AI endpoint** now shows a live **heartbeat** status dot in the **🔌 Manage AI Endpoints** panel (🟢 online · 🟡 reachable/auth · 🔴 offline), so you can tell at a glance whether an endpoint is still reachable. A lightweight background thread periodically pings each endpoint's OpenAI-compatible `/models` route — a cheap GET that **costs zero AI tokens** — and the UI auto-refreshes while the panel is open, with a **Check now** button per endpoint for an on-demand probe. New endpoint: `GET /api/ai_endpoints/health`. Heartbeat interval is configurable via `ai_endpoint_heartbeat_sec` (default 60s).
 - **v0.7.3.2 Beta** — 🗺️ **Map filter + MeshCore nodes now appear + [MT]/[MC] labels.** The Node Map gets a **Show:** filter to display **All / ⭐ Favorites only / 🔵 Meshtastic only / 🟣 MeshCore only** nodes (choice persists), with a live count. Fixes a bug where **MeshCore nodes reporting GPS never showed on the map** — the map only read the page-load snapshot, so positions discovered afterward (common for MeshCore adverts) were ignored; the map now merges live `/nodes` GPS for **both** networks on every refresh. Map tooltips now tag every node with its network (`[MT]` for Meshtastic, `[MC]` for MeshCore).
@@ -38,6 +39,14 @@ setup, see [README.md](README.md). For the built-in extension reference, see
 ---
 
 ## Detailed History
+
+### v0.7.4 Beta — Setup Wizard Covers MeshCore
+
+- **Wizard brought in line with the multi-radio architecture.** The first-start Setup Wizard (also re-runnable from the **⚙️ Config** editor header via **🧙 Run Setup Wizard**) previously only configured a single Meshtastic radio. It now reflects the v0.7.x design where MeshCore is a first-class radio.
+- **New 🟣 MeshCore Radio step** — enable/disable MeshCore, pick the **connection type** (**serial** / **TCP** / **BLE**) with the relevant fields shown for each (serial port + baud, TCP host + port, or BLE address), and toggle **send adverts** and **channel bridging** (MT⇄MC). Writes the `meshcore` block of `config.json`.
+- **MeshCore-only / standalone toggle** — the Meshtastic step gained an **Enable Meshtastic radio** checkbox; unchecking it (`meshtastic_enabled=false`) lets a fresh install be configured as a MeshCore-only node directly from the wizard.
+- **Default Send Network selector** — the node-identity step now sets `default_send_network` (`auto` / Meshtastic / MeshCore / both).
+- **Pre-population** — all new fields load from the existing `config.json` when re-running the wizard, so nothing is lost. No backend/config schema changes — the wizard simply writes the same keys the Config editor already supports.
 
 ### v0.7.3.7 Beta — All Extensions Route to MeshCore
 

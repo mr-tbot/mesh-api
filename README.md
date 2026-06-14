@@ -1,4 +1,4 @@
-# MESH-API v0.7.3.7 Beta — Meshtastic + MeshCore Mesh Router & API / AI Bridge
+# MESH-API v0.7.4 Beta — Meshtastic + MeshCore Mesh Router & API / AI Bridge
 
 > ## 🎉 Now with full MeshCore support (since v0.7.0)
 >
@@ -10,7 +10,7 @@
 
 > ### 🆕 What's new
 >
-> **v0.7.3.7** is a bug-fix release: **all extensions now route to MeshCore.** Messages and AI replies pushed to the mesh from any extension (Telegram, Discord, Home Assistant, alert feeds, etc.) now reach **every connected radio — Meshtastic *and* MeshCore**, not just Meshtastic (GitHub [#59](https://github.com/mr-tbot/mesh-api/issues/59)). The prior **v0.7.3.6** added a **token-free heartbeat** for named AI endpoints — each endpoint shows a live connection-status dot (🟢/🟡/🔴) in the **🔌 Manage AI Endpoints** panel, polled via a cheap `/models` ping that **never spends AI tokens**.
+> **v0.7.4** updates the **first-start Setup Wizard** so it now walks you through **MeshCore** as well as Meshtastic: a dedicated MeshCore step (serial / TCP / BLE, adverts, channel bridging), a toggle to run a **MeshCore-only / standalone node**, and a **default send-network** selector — so a fresh install can be configured for either or both radios without hand-editing `config.json`. The prior **v0.7.3.7** was a bug-fix release ensuring **all extensions route to MeshCore** (GitHub [#59](https://github.com/mr-tbot/mesh-api/issues/59)), and **v0.7.3.6** added a **token-free heartbeat** for named AI endpoints.
 >
 > 📜 **See the full version history in [CHANGELOG.md](CHANGELOG.md).**
 
@@ -66,8 +66,8 @@ In short, MESH-API bridges the gap between **mesh services** and **online/locall
 > **Disclaimer:**  
 > This project is **NOT ASSOCIATED** with the official Meshtastic Project. It is provided solely as an extension to add AI and advanced features to your Mesh network.  
 
-> **v0.7.3.7 Beta:**  
-> The 0.7.x line makes MeshCore a first-class radio and adds the MCP server and firmware-update system; v0.7.3.7 ensures **every extension routes outbound messages to MeshCore as well as Meshtastic**. **These features are still relatively untested in the field — I am actively seeking community feedback.** Run it with a Meshtastic node, a MeshCore node, or both, and please report what works and what breaks. Avoid relying on it for mission‑critical tasks or emergencies; always keep backup communication methods available and use responsibly.  
+> **v0.7.4 Beta:**  
+> The 0.7.x line makes MeshCore a first-class radio and adds the MCP server and firmware-update system; v0.7.4 brings the **first-start Setup Wizard up to date with MeshCore** (dedicated radio step, MeshCore-only/standalone toggle, default send-network), building on v0.7.3.7's fix so **every extension routes outbound messages to MeshCore as well as Meshtastic**. **These features are still relatively untested in the field — I am actively seeking community feedback.** Run it with a Meshtastic node, a MeshCore node, or both, and please report what works and what breaks. Avoid relying on it for mission‑critical tasks or emergencies; always keep backup communication methods available and use responsibly.  
 
 >  
 > *I am one robot using other robots to write this code. Some features are still untested in the field. Check the GitHub issues for fixes or feedback!*
@@ -1088,7 +1088,7 @@ The `extensions/` directory includes 25+ working extensions you can reference:
 
 📜 **The full version history has moved to [CHANGELOG.md](CHANGELOG.md)** to keep
 this README short. It covers every release from v0.1 through the current
-v0.7.3.7 Beta, with both per-release summaries and detailed notes.
+v0.7.4 Beta, with both per-release summaries and detailed notes.
 
 ---
 
@@ -1121,7 +1121,7 @@ v0.7.3.7 Beta, with both per-release summaries and detailed notes.
   - **commands_config.json** — a form-based command builder. Add, edit, or remove slash commands. Each command has a trigger (`/mycommand`), a type (Static Response or AI Prompt), a response/prompt value, and a description. No manual JSON editing needed.
   - **motd.json** — a simple text field for the Message of the Day string
 - Make edits and click Save. The editor validates data before saving and writes changes atomically.
-- **🧙 Run Setup Wizard** — re-run the first-start wizard at any time from the Config Editor header. The wizard pre-populates fields from the existing configuration so you can review and update settings without starting from scratch.
+- **🧙 Run Setup Wizard** — re-run the first-start wizard at any time from the Config Editor header. The wizard walks you through your **Meshtastic radio**, your **MeshCore radio** (serial / TCP / BLE, adverts, channel bridging — or a MeshCore-only/standalone node), your **AI provider**, and **node identity** (including the default send-network). It pre-populates every field from the existing configuration so you can review and update settings without starting from scratch.
 - Changes to some settings may require restarting the app/container to take effect (e.g., provider, connectivity, or Discord/Twilio credentials).
 - Security note: If you expose the WebUI beyond localhost, protect access to the dashboard since configuration files may contain secrets (API keys, tokens).
 
@@ -1521,8 +1521,8 @@ Update `extensions/discord/config.json` with the following keys (or use the WebU
 
 ## Contributing & Disclaimer
 
-- **v0.7.3.7 Beta:**  
-  The 0.7.x line makes MeshCore a first-class radio and adds the MCP server, firmware-update system, token-free AI-endpoint heartbeat monitoring (v0.7.3.6), and — in v0.7.3.7 — a fix so **all extensions route to MeshCore**, not just Meshtastic. These features are still relatively untested in the field — please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues) so they may be investigated and addressed.
+- **v0.7.4 Beta:**  
+  The 0.7.x line makes MeshCore a first-class radio and adds the MCP server, firmware-update system, token-free AI-endpoint heartbeat monitoring (v0.7.3.6), and the all-extensions-to-MeshCore fix (v0.7.3.7); v0.7.4 brings the **first-start Setup Wizard up to date with MeshCore** (dedicated radio step, MeshCore-only/standalone toggle, default send-network). These features are still relatively untested in the field — please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues) so they may be investigated and addressed.
 - **Feedback & Contributions:**  
   Report issues or submit pull requests on GitHub. Your input is invaluable.
 - **Use Responsibly:**  
@@ -1534,7 +1534,7 @@ Update `extensions/discord/config.json` with the following keys (or use the WebU
 
 ## Conclusion
 
-MESH-API v0.7.3.7 Beta is here! The 0.7.x line treats **MeshCore as a first-class radio** alongside Meshtastic, adds a built-in **MCP server** for external AI agents, a **firmware/software update manager**, token-free AI-endpoint heartbeat monitoring (v0.7.3.6), and — new in v0.7.3.7 — a fix so **every extension routes outbound messages to MeshCore as well as Meshtastic**. All on top of the powerful 30-extension plugin system, 12 AI providers, and safer defaults. Whether you’re chatting directly with your node, integrating with Home Assistant, or leveraging multi‑channel alerting (Twilio, Email, Discord), this release offers the most comprehensive and extensible off‑grid AI assistant experience yet. Please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues).
+MESH-API v0.7.4 Beta is here! The 0.7.x line treats **MeshCore as a first-class radio** alongside Meshtastic, adds a built-in **MCP server** for external AI agents, a **firmware/software update manager**, token-free AI-endpoint heartbeat monitoring (v0.7.3.6), the all-extensions-to-MeshCore routing fix (v0.7.3.7), and — new in v0.7.4 — a **Setup Wizard that now guides you through MeshCore** (dedicated radio step, MeshCore-only/standalone toggle, default send-network). All on top of the powerful 30-extension plugin system, 12 AI providers, and safer defaults. Whether you’re chatting directly with your node, integrating with Home Assistant, or leveraging multi‑channel alerting (Twilio, Email, Discord), this release offers the most comprehensive and extensible off‑grid AI assistant experience yet. Please report any issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues).
 
 **Enjoy tinkering, stay safe, and have fun!**  
 Please share your feedback or report issues on [GitHub](https://github.com/mr-tbot/mesh-api/issues).

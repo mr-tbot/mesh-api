@@ -190,7 +190,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.3.7 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v0.7.4 Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -7169,9 +7169,10 @@ def dashboard():
     </div>
     <!-- Step 2: Connection -->
     <div id="wizStep2" class="wiz-step" style="display:none;">
-      <h2>🔌 Step 1: Connection</h2>
+      <h2>🔌 Step 1: Meshtastic Radio</h2>
       <div class="disclaimer-text" style="text-align:left;">
-        <p>How is your Meshtastic device connected?</p>
+        <p>How is your <strong>Meshtastic</strong> device connected? (You can also run a <strong>MeshCore-only</strong> node — just uncheck the box below and configure MeshCore on the next step.)</p>
+        <div style="display:flex;align-items:center;gap:6px;margin:10px 0;"><input type="checkbox" id="wiz_meshtastic_enabled" checked style="accent-color:var(--theme-color);width:18px;height:18px;"><label for="wiz_meshtastic_enabled" style="color:#ccc;font-size:0.9em;">Enable Meshtastic radio (uncheck for a MeshCore-only node)</label></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0;">
           <div><label style="color:#ccc;font-size:0.9em;">Serial Port</label><input type="text" id="wiz_serial_port" value="/dev/ttyUSB0" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
           <div><label style="color:#ccc;font-size:0.9em;">Serial Baud</label><input type="number" id="wiz_serial_baud" value="460800" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
@@ -7186,11 +7187,40 @@ def dashboard():
           <div style="grid-column:1/-1;"><label style="color:#ccc;font-size:0.9em;">BLE Address</label><input type="text" id="wiz_ble_address" placeholder="" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
         </div>
       </div>
-      <div class="disclaimer-btns"><button class="btn-accept" style="background:#555;" onclick="wizNext(1)">← Back</button><button class="btn-accept" onclick="wizNext(3)">Next →</button></div>
+      <div class="disclaimer-btns"><button class="btn-accept" style="background:#555;" onclick="wizNext(1)">← Back</button><button class="btn-accept" onclick="wizNext(5)">Next →</button></div>
+    </div>
+    <!-- Step 2: MeshCore Radio -->
+    <div id="wizStep5" class="wiz-step" style="display:none;">
+      <h2>🟣 Step 2: MeshCore Radio</h2>
+      <div class="disclaimer-text" style="text-align:left;">
+        <p><a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> is now a first-class radio. Enable it to run MeshCore alongside Meshtastic (or on its own). Leave it disabled if you only use Meshtastic.</p>
+        <div style="display:flex;align-items:center;gap:6px;margin:10px 0;"><input type="checkbox" id="wiz_mc_enabled" style="accent-color:var(--theme-color);width:18px;height:18px;"><label for="wiz_mc_enabled" style="color:#ccc;font-size:0.9em;">Enable MeshCore radio</label></div>
+        <div style="margin:10px 0;"><label style="color:#ccc;font-size:0.9em;">Connection Type</label>
+          <select id="wiz_mc_conn" onchange="wizMcShowConn()" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;">
+            <option value="serial">Serial (USB)</option><option value="tcp">TCP / Wi-Fi</option><option value="ble">Bluetooth (BLE)</option>
+          </select>
+        </div>
+        <div id="wiz_mc_serial_fields" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0;">
+          <div><label style="color:#ccc;font-size:0.9em;">Serial Port</label><input type="text" id="wiz_mc_serial_port" value="/dev/ttyUSB1" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+          <div><label style="color:#ccc;font-size:0.9em;">Serial Baud</label><input type="number" id="wiz_mc_serial_baud" value="115200" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+        </div>
+        <div id="wiz_mc_tcp_fields" style="display:none;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0;">
+          <div><label style="color:#ccc;font-size:0.9em;">TCP Host</label><input type="text" id="wiz_mc_tcp_host" placeholder="192.168.1.100" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+          <div><label style="color:#ccc;font-size:0.9em;">TCP Port</label><input type="number" id="wiz_mc_tcp_port" value="5000" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+        </div>
+        <div id="wiz_mc_ble_fields" style="display:none;margin:8px 0;">
+          <div><label style="color:#ccc;font-size:0.9em;">BLE Address / Name</label><input type="text" id="wiz_mc_ble_address" placeholder="" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0;">
+          <div style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="wiz_mc_send_adverts" checked style="accent-color:var(--theme-color);width:18px;height:18px;"><label for="wiz_mc_send_adverts" style="color:#ccc;font-size:0.9em;">Send adverts</label></div>
+          <div style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="wiz_mc_bridge" checked style="accent-color:var(--theme-color);width:18px;height:18px;"><label for="wiz_mc_bridge" style="color:#ccc;font-size:0.9em;">Bridge channels MT⇄MC</label></div>
+        </div>
+      </div>
+      <div class="disclaimer-btns"><button class="btn-accept" style="background:#555;" onclick="wizNext(2)">← Back</button><button class="btn-accept" onclick="wizNext(3)">Next →</button></div>
     </div>
     <!-- Step 3: AI Provider -->
     <div id="wizStep3" class="wiz-step" style="display:none;">
-      <h2>🤖 Step 2: AI Provider</h2>
+      <h2>🤖 Step 3: AI Provider</h2>
       <div class="disclaimer-text" style="text-align:left;">
         <p>Select your AI backend (you can change this later in Settings).</p>
         <div style="margin:10px 0;"><label style="color:#ccc;font-size:0.9em;">Provider</label>
@@ -7204,11 +7234,11 @@ def dashboard():
         </div>
         <div id="wizProviderFields" style="display:grid;grid-template-columns:1fr;gap:8px;margin-top:10px;"></div>
       </div>
-      <div class="disclaimer-btns"><button class="btn-accept" style="background:#555;" onclick="wizNext(2)">← Back</button><button class="btn-accept" onclick="wizNext(4)">Next →</button></div>
+      <div class="disclaimer-btns"><button class="btn-accept" style="background:#555;" onclick="wizNext(5)">← Back</button><button class="btn-accept" onclick="wizNext(4)">Next →</button></div>
     </div>
     <!-- Step 4: Node Identity -->
     <div id="wizStep4" class="wiz-step" style="display:none;">
-      <h2>📻 Step 3: Node Identity</h2>
+      <h2>📻 Step 4: Node Identity</h2>
       <div class="disclaimer-text" style="text-align:left;">
         <p>Give your node a name and location.</p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0;">
@@ -7216,6 +7246,11 @@ def dashboard():
           <div><label style="color:#ccc;font-size:0.9em;">Location</label><input type="text" id="wiz_location" placeholder="@ My Location" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
         </div>
         <div style="margin:10px 0;"><label style="color:#ccc;font-size:0.9em;">Channel 0 Name</label><input type="text" id="wiz_ch0" value="LongFast" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;box-sizing:border-box;"></div>
+        <div style="margin:10px 0;"><label style="color:#ccc;font-size:0.9em;">Default Send Network</label>
+          <select id="wiz_send_network" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:6px;">
+            <option value="auto">Auto (all active radios)</option><option value="meshtastic">Meshtastic only</option><option value="meshcore">MeshCore only</option><option value="both">Both</option>
+          </select>
+        </div>
       </div>
       <div class="disclaimer-btns"><button class="btn-accept" style="background:#555;" onclick="wizNext(3)">← Back</button><button class="btn-accept" onclick="wizFinish()">Finish Setup ✓</button></div>
     </div>
@@ -7247,6 +7282,13 @@ def dashboard():
       c.appendChild(d);
     });
   }
+  function wizMcShowConn() {
+    const t = (document.getElementById('wiz_mc_conn')||{}).value || 'serial';
+    const set = (id, show, disp) => { const el = document.getElementById(id); if (el) el.style.display = show ? (disp||'grid') : 'none'; };
+    set('wiz_mc_serial_fields', t === 'serial', 'grid');
+    set('wiz_mc_tcp_fields', t === 'tcp', 'grid');
+    set('wiz_mc_ble_fields', t === 'ble', 'block');
+  }
   function wizNext(step) {
     document.querySelectorAll('.wiz-step').forEach(s => s.style.display = 'none');
     document.getElementById('wizStep' + step).style.display = '';
@@ -7267,6 +7309,18 @@ def dashboard():
       cfg.wifi_port = parseInt(gv('wiz_wifi_port')) || cfg.wifi_port;
       cfg.use_bluetooth = gb('wiz_use_bluetooth');
       cfg.ble_address = gv('wiz_ble_address') || cfg.ble_address;
+      cfg.meshtastic_enabled = gb('wiz_meshtastic_enabled');
+      // MeshCore radio
+      cfg.meshcore = Object.assign({}, cfg.meshcore || {});
+      cfg.meshcore.enabled = gb('wiz_mc_enabled');
+      const mcConn = gv('wiz_mc_conn'); if (mcConn) cfg.meshcore.connection_type = mcConn;
+      cfg.meshcore.serial_port = gv('wiz_mc_serial_port') || cfg.meshcore.serial_port;
+      cfg.meshcore.serial_baud = parseInt(gv('wiz_mc_serial_baud')) || cfg.meshcore.serial_baud;
+      cfg.meshcore.tcp_host = gv('wiz_mc_tcp_host') || cfg.meshcore.tcp_host;
+      cfg.meshcore.tcp_port = parseInt(gv('wiz_mc_tcp_port')) || cfg.meshcore.tcp_port;
+      cfg.meshcore.ble_address = gv('wiz_mc_ble_address') || cfg.meshcore.ble_address;
+      cfg.meshcore.send_adverts = gb('wiz_mc_send_adverts');
+      cfg.meshcore.bridge_enabled = gb('wiz_mc_bridge');
       // AI Provider
       const prov = gv('wiz_ai_provider');
       if (prov) {
@@ -7296,6 +7350,7 @@ def dashboard():
       cfg.ai_node_name = gv('wiz_node_name') || cfg.ai_node_name;
       cfg.local_location_string = gv('wiz_location') || cfg.local_location_string;
       if (gv('wiz_ch0')) { cfg.channel_names = cfg.channel_names || {}; cfg.channel_names['0'] = gv('wiz_ch0'); }
+      cfg.default_send_network = gv('wiz_send_network') || cfg.default_send_network;
       // Save
       const sr = await fetch('/config_editor/save', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ config: cfg, commands_config: data.commands_config, motd: data.motd }) });
       if (!sr.ok) { const j = await sr.json(); throw new Error(j.message || 'Save failed'); }
@@ -7319,6 +7374,19 @@ def dashboard():
       sv('wiz_wifi_port', cfg.wifi_port);
       sb('wiz_use_bluetooth', cfg.use_bluetooth);
       sv('wiz_ble_address', cfg.ble_address);
+      sb('wiz_meshtastic_enabled', cfg.meshtastic_enabled !== false);
+      // MeshCore radio
+      const mc = cfg.meshcore || {};
+      sb('wiz_mc_enabled', mc.enabled);
+      sv('wiz_mc_conn', mc.connection_type || 'serial');
+      sv('wiz_mc_serial_port', mc.serial_port);
+      sv('wiz_mc_serial_baud', mc.serial_baud);
+      sv('wiz_mc_tcp_host', mc.tcp_host);
+      sv('wiz_mc_tcp_port', mc.tcp_port);
+      sv('wiz_mc_ble_address', mc.ble_address);
+      sb('wiz_mc_send_adverts', mc.send_adverts !== false);
+      sb('wiz_mc_bridge', mc.bridge_enabled !== false);
+      wizMcShowConn();
       // AI Provider
       if (cfg.ai_provider) {
         sv('wiz_ai_provider', cfg.ai_provider);
@@ -7345,6 +7413,7 @@ def dashboard():
       sv('wiz_node_name', cfg.ai_node_name);
       sv('wiz_location', cfg.local_location_string);
       if (cfg.channel_names && cfg.channel_names['0']) sv('wiz_ch0', cfg.channel_names['0']);
+      sv('wiz_send_network', cfg.default_send_network || 'auto');
     } catch(e) { console.log('Could not pre-populate wizard:', e); }
   }
   function openWizard() {
@@ -7592,7 +7661,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.3.7 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mr-tbot.com" target="_blank">MESH-API v0.7.4 Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -8291,7 +8360,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.3.7 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.4 Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>
