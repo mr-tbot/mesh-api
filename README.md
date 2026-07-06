@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/mr-tbot-mesh-api-badge.png)](https://mseep.ai/app/mr-tbot-mesh-api)
+
 # MESH-API v0.7.4.1 Beta — Meshtastic + MeshCore Mesh Router & API / AI Bridge
 
 > ## 🎉 Now with full MeshCore support (since v0.7.0)
