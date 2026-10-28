@@ -54,6 +54,9 @@ For details, link to existing docs rather than duplicating them:
 
 ## Conventions & Pitfalls
 
+- The app version lives in one place: `MESH_API_VERSION` in [version.py](version.py). The startup
+  banner, dashboard footer and About panel, the update checker, and the MCP `serverInfo` all read
+  it. On a release, bump only that constant; never hardcode a version string anywhere else.
 - Do **not** modify [base_extension.py](extensions/base_extension.py) or
   [extensions/loader.py](extensions/loader.py) when adding features — extend, don't edit the framework.
 - Never override `__init__` in an extension; the loader constructs it with `(extension_dir, app_context)`.

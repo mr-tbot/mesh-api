@@ -41,10 +41,12 @@ import time
 import traceback
 from typing import Any, Callable, Optional
 
+from version import MESH_API_VERSION
+
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = {"2025-06-18", "2025-03-26", "2024-11-05"}
 SERVER_NAME = "mesh-api"
-SERVER_VERSION = "0.7.4.1"
+SERVER_VERSION = MESH_API_VERSION
 
 # JSON-RPC error codes
 PARSE_ERROR = -32700
