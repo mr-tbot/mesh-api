@@ -1,4 +1,4 @@
-# MESH-API v0.7.5.3 Beta — Meshtastic + MeshCore Mesh Router & API / AI Bridge
+# MESH-API v0.7.5.4 Beta — Meshtastic + MeshCore Mesh Router & API / AI Bridge
 
 > ## 🎉 Now with full MeshCore support (since v0.7.0)
 >
@@ -336,7 +336,7 @@ You can run **one Meshtastic radio, one MeshCore radio, or one of each.** With b
 
 <img width="2543" height="1271" alt="image" src="https://github.com/user-attachments/assets/d2091bab-cbdf-4b4d-b424-10d59d812f22" />
 
-The latest v0.7.5.3 Beta Web-UI!  NEW MAPS FEATURES AND TONS OF NEW GOODIES!
+The latest v0.7.5.4 Beta Web-UI!  NEW MAPS FEATURES AND TONS OF NEW GOODIES!
 
 ---
 
