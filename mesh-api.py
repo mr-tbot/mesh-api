@@ -28,6 +28,7 @@ import collections
 from twilio.rest import Client  # for Twilio SMS support
 from unidecode import unidecode   # Added unidecode import for Ollama text normalization
 from google.protobuf.message import DecodeError
+from version import MESH_API_VERSION
 import re
 # Make sure DEBUG_ENABLED exists before any logger/filter classes use it
 # -----------------------------
@@ -188,7 +189,7 @@ log.disabled = True
 
 BANNER = (
     "\033[38;5;214m"
-    """
+    f"""
 ███╗   ███╗███████╗███████╗██╗  ██╗       █████╗ ██████╗ ██╗
 ████╗ ████║██╔════╝██╔════╝██║  ██║      ██╔══██╗██╔══██╗██║
 ██╔████╔██║█████╗  ███████╗███████║█████╗███████║██████╔╝██║
@@ -197,7 +198,7 @@ BANNER = (
 ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝
                                                             
 
-MESH-API v0.7.5.3 Beta by: MR_TBOT (https://mr-tbot.com)
+MESH-API v{MESH_API_VERSION} Beta by: MR_TBOT (https://mr-tbot.com)
 https://mesh-api.dev - (https://github.com/mr-tbot/mesh-api/)
     \033[32m 
 Messaging Dashboard Access: http://localhost:5000/dashboard \033[38;5;214m
@@ -8118,7 +8119,7 @@ def dashboard():
     <a class="btnlink" href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="background:#c62828; border-color:#c62828; color:#fff;">🐛 Report a Bug</a>
   </div>
   <div class="footer-right-link">
-    <a class="btnlink" href="https://mesh-api.dev" target="_blank">MESH-API v0.7.5.3 Beta\nby: MR-TBOT</a>
+    <a class="btnlink" href="https://mesh-api.dev" target="_blank">MESH-API v""" + MESH_API_VERSION + """ Beta\nby: MR-TBOT</a>
   </div>
   <div class="footer-left-link"><a class="btnlink" href="#" id="settingsFloatBtn">Show UI Settings</a></div>
   <div id="commandsModal" class="modal-overlay" onclick="if(event.target===this) closeCommandsModal()">
@@ -8821,7 +8822,7 @@ def dashboard():
     </div>
     <div style="margin-top:16px;padding:12px;border-top:1px solid #444;">
       <h3>ℹ️ About</h3>
-      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v0.7.5.3 Beta</strong></p>
+      <p style="color:#ccc;font-size:0.85em;margin:4px 0;"><strong>MESH-API v""" + MESH_API_VERSION + """ Beta</strong></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">A powerful API and WebUI for <a href="https://meshtastic.org/" target="_blank" style="color:var(--theme-color);">Meshtastic</a> and <a href="https://meshcore.net/" target="_blank" style="color:var(--theme-color);">MeshCore</a> mesh networking devices.</p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;">Created by <a href="https://mr-tbot.com" target="_blank" style="color:var(--theme-color);">MR-TBOT</a></p>
       <p style="color:#aaa;font-size:0.8em;margin:4px 0;"><a href="https://mesh-api.dev" target="_blank" style="color:var(--theme-color);">mesh-api.dev</a> &bull; <a href="https://github.com/mr-tbot/mesh-api" target="_blank" style="color:var(--theme-color);">GitHub</a> &bull; <a href="https://github.com/mr-tbot/mesh-api/issues" target="_blank" style="color:var(--theme-color);">Report a Bug</a></p>

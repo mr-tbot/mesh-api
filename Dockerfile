@@ -24,6 +24,7 @@ COPY mesh-api.py .
 COPY meshcore_core.py .
 COPY mcp_server.py .
 COPY firmware_updater.py .
+COPY version.py .
 COPY requirements.txt .
 COPY config.json .
 COPY commands_config.json .
