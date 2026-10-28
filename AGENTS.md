@@ -55,8 +55,6 @@ For details, link to existing docs rather than duplicating them:
 ## Conventions & Pitfalls
 
 - **Version lives in `version.py` only (`MESH_API_VERSION`).** Code never hardcodes a version string: the banner, dashboard, update checker and MCP server all read that constant. Release checklist: bump `version.py`; update the README title (line 1) and the screenshot caption; prepend the CHANGELOG summary line; publish a GitHub Release whose tag is `v<MESH_API_VERSION>-beta` (the updater compares the tag with the constant, so they must match); the Docker image is built and pushed by `.github/workflows/docker-publish.yml` when the release is published.
-  banner, dashboard footer and About panel, the update checker, and the MCP `serverInfo` all read
-  it. On a release, bump only that constant; never hardcode a version string anywhere else.
 - Do **not** modify [base_extension.py](extensions/base_extension.py) or
   [extensions/loader.py](extensions/loader.py) when adding features — extend, don't edit the framework.
 - Never override `__init__` in an extension; the loader constructs it with `(extension_dir, app_context)`.
