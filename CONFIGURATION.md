@@ -232,7 +232,7 @@ interface with **no login**, and MESH-API prints a warning at startup when that 
   token, and the webhook paths are called by Twilio, Discord, n8n, WhatsApp and the generic
   webhook extension. If you changed an extension's webhook path, add it here. Each entry also
   covers the paths below it.
-- **Secret redaction:** values of keys such as `*_api_key`, `*token`, `*_password`, `*_sid`,
+- **Secret redaction:** values of keys such as `*_api_key`, `*token`, `*_password`, `*_pass`, `*_sid`,
   `*_pin` and `*webhook_url` are sent to the browser as `••••••••`. Saving a form with the mask
   unchanged keeps the stored value; clearing the field clears it. The **Backup** download still
   contains the real values, so keep the login on if the dashboard is reachable by others.

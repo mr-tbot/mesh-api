@@ -690,9 +690,9 @@ def _webui_require_auth():
 
 
 # Config keys whose values are secrets. Matched on the key name's last part, so
-# `openai_api_key`, `bot_token`, `twilio_sid`, `secure_pin` and `webhook_url` all match
+# `openai_api_key`, `bot_token`, `smtp_pass`, `twilio_sid`, `secure_pin` and `webhook_url` all match
 # while `max_tokens` or `enable_pin` (a boolean) are left alone.
-_SECRET_KEY_RE = re.compile(r"(?:^|_)(?:api_key|key|token|secret|password|passwd|sid|pin|webhook_url)$",
+_SECRET_KEY_RE = re.compile(r"(?:^|_)(?:api_key|key|token|secret|password|passwd|pass|sid|pin|webhook_url)$",
                             re.IGNORECASE)
 SECRET_MASK = "••••••••"
 
