@@ -3192,6 +3192,18 @@ def dashboard():
     .ext-grid .ext-actions { grid-area: actions; display: flex; gap: 6px; justify-content: flex-end; }
     .ext-grid .ext-actions .reply-btn { margin-left: 0; }
     .ext-grid-head { position: sticky; top: 0; z-index: 1; }
+    /* Channel Agents: same idea as .ext-grid. */
+    .ca-grid { display: grid; grid-template-columns: 180px 140px minmax(0, 1fr) 80px;
+      grid-template-areas: "ch type prov pin"; align-items: center; column-gap: 14px; padding: 8px 12px; }
+    .ca-grid .ca-ch { grid-area: ch; overflow-wrap: anywhere; } .ca-grid .ca-typecell { grid-area: type; }
+    .ca-grid .ca-provcell { grid-area: prov; min-width: 0; } .ca-grid .ca-pincell { grid-area: pin; justify-self: end; white-space: nowrap; }
+    .ca-grid select { width: 100%; box-sizing: border-box; }
+    .ca-grid-head { position: sticky; top: 0; z-index: 1; }
+    @media (max-width: 640px) {
+      .ca-grid { grid-template-columns: minmax(0, 1fr) 80px; row-gap: 6px;
+        grid-template-areas: "ch pin" "type type" "prov prov"; }
+      .ca-grid-head { display: none; }
+    }
     @media (max-width: 640px) {
       .ext-grid { grid-template-columns: 14px minmax(0, 1fr) 160px; row-gap: 4px;
         grid-template-areas: "dot name actions" ". status status" ". cmds cmds"; }
@@ -5012,19 +5024,20 @@ def dashboard():
         const extOpts = exts.length
           ? exts.map(e => '<option value="' + e.slug + '"' + (a && type === 'extension' && a.slug === e.slug ? ' selected' : '') + '>' + e.name + ' (' + e.slug + ')</option>').join('')
           : '<option value="">(no extensions loaded)</option>';
-        html += '<div class="ca-row" data-ch="' + ch + '" style="display:flex;align-items:center;gap:14px;padding:8px 12px;border-bottom:1px solid #333;flex-wrap:wrap;">'
-          + '<span style="min-width:120px;font-weight:bold;color:var(--theme-color);">📻 ' + ch + ' – ' + chName + '</span>'
-          + '<select class="ca-type" onchange="_caTypeChanged(this)" style="min-width:120px;">'
+        html += '<div class="ca-row ca-grid" data-ch="' + ch + '" style="border-bottom:1px solid #333;">'
+          + '<span class="ca-ch" style="font-weight:bold;color:var(--theme-color);">📻 ' + ch + ' – ' + chName
+          + (legacy ? '<br><span style="font-size:0.78em;font-weight:normal;color:#e6a;">(from Home Assistant config)</span>' : '')
+          + '</span>'
+          + '<span class="ca-typecell"><select class="ca-type" onchange="_caTypeChanged(this)">'
           + '<option value="none"' + (type === 'none' ? ' selected' : '') + '>— None —</option>'
           + '<option value="ai"' + (type === 'ai' ? ' selected' : '') + '>AI Provider</option>'
           + '<option value="extension"' + (type === 'extension' ? ' selected' : '') + '>Extension</option>'
-          + '</select>'
-          + '<span style="flex:1;min-width:160px;">'
+          + '</select></span>'
+          + '<span class="ca-provcell">'
           + '<select class="ca-prov" style="width:100%;display:' + (type === 'ai' ? 'inline-block' : 'none') + ';">' + provOpts + '</select>'
           + '<select class="ca-ext" style="width:100%;display:' + (type === 'extension' ? 'inline-block' : 'none') + ';">' + extOpts + '</select>'
           + '</span>'
-          + '<label style="font-size:0.85em;color:#ccc;white-space:nowrap;"><input type="checkbox" class="ca-pin"' + (a && a.require_pin ? ' checked' : '') + '> 🔒 PIN</label>'
-          + (legacy ? '<span style="font-size:0.78em;color:#e6a;white-space:nowrap;">(from Home Assistant config)</span>' : '')
+          + '<label class="ca-pincell" style="font-size:0.85em;color:#ccc;"><input type="checkbox" class="ca-pin"' + (a && a.require_pin ? ' checked' : '') + '> 🔒 PIN</label>'
           + '</div>';
       });
       body.innerHTML = html;
@@ -8590,14 +8603,14 @@ def dashboard():
             <button class="mark-read-btn" onclick="saveAiEndpoints()">Save Endpoints</button>
           </div>
         </div>
-        <div style="border:1px solid var(--theme-color); border-radius:8px; overflow:hidden;">
-          <div style="background:#222; padding:8px 12px; border-bottom:1px solid var(--theme-color); display:flex; gap:14px; font-weight:bold; color:var(--theme-color); font-size:0.9em;">
-            <span style="min-width:120px;">Channel</span>
-            <span style="min-width:120px;">Agent Type</span>
-            <span style="flex:1;">Provider / Extension</span>
-            <span>PIN</span>
+        <div style="border:1px solid var(--theme-color); border-radius:8px; max-height:50vh; overflow:auto;">
+          <div class="ca-grid ca-grid-head" style="background:#222; border-bottom:1px solid var(--theme-color); font-weight:bold; color:var(--theme-color); font-size:0.9em;">
+            <span class="ca-ch">Channel</span>
+            <span class="ca-typecell">Agent Type</span>
+            <span class="ca-provcell">Provider / Extension</span>
+            <span class="ca-pincell">PIN</span>
           </div>
-          <div id="channelAgentsBody" style="max-height:50vh; overflow:auto;"></div>
+          <div id="channelAgentsBody"></div>
         </div>
         <div style="margin-top:8px; color:#888; font-size:0.82em;">
           Channels marked <span style="color:#e6a;">(from Home Assistant config)</span> come from the legacy
