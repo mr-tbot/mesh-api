@@ -3184,6 +3184,31 @@ def dashboard():
     .channel-group-header .ch-toggle.collapsed { transform: rotate(-90deg); }
     .channel-group-body { padding: 6px 10px; }
     .channel-group-body.collapsed { display: none; }
+    /* Extensions Manager: header and rows share one grid so the columns line up. */
+    .ext-grid { display: grid; grid-template-columns: 14px minmax(150px, 1.2fr) 80px minmax(0, 2fr) 180px;
+      grid-template-areas: "dot name status cmds actions"; align-items: center; column-gap: 14px; padding: 8px 12px; }
+    .ext-grid .ext-dot { grid-area: dot; } .ext-grid .ext-name { grid-area: name; }
+    .ext-grid .ext-status { grid-area: status; } .ext-grid .ext-cmds { grid-area: cmds; overflow-wrap: anywhere; }
+    .ext-grid .ext-actions { grid-area: actions; display: flex; gap: 6px; justify-content: flex-end; }
+    .ext-grid .ext-actions .reply-btn { margin-left: 0; }
+    .ext-grid-head { position: sticky; top: 0; z-index: 1; }
+    /* Channel Agents: same idea as .ext-grid. */
+    .ca-grid { display: grid; grid-template-columns: 180px 140px minmax(0, 1fr) 80px;
+      grid-template-areas: "ch type prov pin"; align-items: center; column-gap: 14px; padding: 8px 12px; }
+    .ca-grid .ca-ch { grid-area: ch; overflow-wrap: anywhere; } .ca-grid .ca-typecell { grid-area: type; }
+    .ca-grid .ca-provcell { grid-area: prov; min-width: 0; } .ca-grid .ca-pincell { grid-area: pin; justify-self: end; white-space: nowrap; }
+    .ca-grid select { width: 100%; box-sizing: border-box; }
+    .ca-grid-head { position: sticky; top: 0; z-index: 1; }
+    @media (max-width: 640px) {
+      .ca-grid { grid-template-columns: minmax(0, 1fr) 80px; row-gap: 6px;
+        grid-template-areas: "ch pin" "type type" "prov prov"; }
+      .ca-grid-head { display: none; }
+    }
+    @media (max-width: 640px) {
+      .ext-grid { grid-template-columns: 14px minmax(0, 1fr) 160px; row-gap: 4px;
+        grid-template-areas: "dot name actions" ". status status" ". cmds cmds"; }
+      .ext-grid-head { display: none; }
+    }
     .reply-btn { margin-left: 10px; padding: 4px 10px; font-size: 0.85em; background: var(--bg-input); color: var(--theme-color); border: 1px solid var(--theme-color); border-radius: 5px; cursor: pointer; transition: background 0.15s, color 0.15s; }
     .reply-btn:hover { background: var(--theme-color); color: #000; }
     .btn-send { background: #1b5e20; color: #fff; border-color: #388e3c; }
@@ -4828,34 +4853,37 @@ def dashboard():
         const info = extensionsData.available[slug];
         const isLoaded = slug in (extensionsData.loaded || {});
         const row = document.createElement('div');
-        row.className = 'ext-row';
-        row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:8px 10px; border-bottom:1px solid #333; flex-wrap:wrap;';
+        row.className = 'ext-row ext-grid';
+        row.style.cssText = 'border-bottom:1px solid #333;';
 
         const statusDot = document.createElement('span');
-        statusDot.style.cssText = 'width:12px; height:12px; border-radius:50%; display:inline-block; flex-shrink:0;';
+        statusDot.className = 'ext-dot';
+        statusDot.style.cssText = 'width:12px; height:12px; border-radius:50%; display:inline-block;';
         statusDot.style.background = isLoaded ? '#0f0' : (info.enabled ? '#ff0' : '#666');
         statusDot.title = isLoaded ? 'Active' : (info.enabled ? 'Enabled (not loaded)' : 'Disabled');
         row.appendChild(statusDot);
 
         const nameSpan = document.createElement('span');
-        nameSpan.style.cssText = 'font-weight:bold; color:var(--theme-color); min-width:120px;';
+        nameSpan.className = 'ext-name';
+        nameSpan.style.cssText = 'font-weight:bold; color:var(--theme-color);';
         nameSpan.textContent = info.name + ' v' + info.version;
         row.appendChild(nameSpan);
 
         const statusLabel = document.createElement('span');
-        statusLabel.style.cssText = 'font-size:0.85em; color:#aaa; min-width:80px;';
+        statusLabel.className = 'ext-status';
+        statusLabel.style.cssText = 'font-size:0.85em; color:#aaa;';
         statusLabel.textContent = isLoaded ? 'Active' : (info.enabled ? 'Enabled' : 'Disabled');
         row.appendChild(statusLabel);
 
-        if (info.commands && info.commands.length > 0) {
-          const cmds = document.createElement('span');
-          cmds.style.cssText = 'font-size:0.85em; color:#0ff;';
-          cmds.textContent = info.commands.join(', ');
-          row.appendChild(cmds);
-        }
+        // Always add the commands cell (empty when there are none) so the grid stays aligned.
+        const cmds = document.createElement('span');
+        cmds.className = 'ext-cmds';
+        cmds.style.cssText = 'font-size:0.85em; color:#0ff;';
+        cmds.textContent = (info.commands && info.commands.length > 0) ? info.commands.join(', ') : '';
+        row.appendChild(cmds);
 
         const btnGroup = document.createElement('span');
-        btnGroup.style.cssText = 'margin-left:auto; display:flex; gap:6px;';
+        btnGroup.className = 'ext-actions';
 
         const toggleBtn = document.createElement('button');
         toggleBtn.className = 'reply-btn';
@@ -4996,19 +5024,20 @@ def dashboard():
         const extOpts = exts.length
           ? exts.map(e => '<option value="' + e.slug + '"' + (a && type === 'extension' && a.slug === e.slug ? ' selected' : '') + '>' + e.name + ' (' + e.slug + ')</option>').join('')
           : '<option value="">(no extensions loaded)</option>';
-        html += '<div class="ca-row" data-ch="' + ch + '" style="display:flex;align-items:center;gap:14px;padding:8px 12px;border-bottom:1px solid #333;flex-wrap:wrap;">'
-          + '<span style="min-width:120px;font-weight:bold;color:var(--theme-color);">📻 ' + ch + ' – ' + chName + '</span>'
-          + '<select class="ca-type" onchange="_caTypeChanged(this)" style="min-width:120px;">'
+        html += '<div class="ca-row ca-grid" data-ch="' + ch + '" style="border-bottom:1px solid #333;">'
+          + '<span class="ca-ch" style="font-weight:bold;color:var(--theme-color);">📻 ' + ch + ' – ' + chName
+          + (legacy ? '<br><span style="font-size:0.78em;font-weight:normal;color:#e6a;">(from Home Assistant config)</span>' : '')
+          + '</span>'
+          + '<span class="ca-typecell"><select class="ca-type" onchange="_caTypeChanged(this)">'
           + '<option value="none"' + (type === 'none' ? ' selected' : '') + '>— None —</option>'
           + '<option value="ai"' + (type === 'ai' ? ' selected' : '') + '>AI Provider</option>'
           + '<option value="extension"' + (type === 'extension' ? ' selected' : '') + '>Extension</option>'
-          + '</select>'
-          + '<span style="flex:1;min-width:160px;">'
+          + '</select></span>'
+          + '<span class="ca-provcell">'
           + '<select class="ca-prov" style="width:100%;display:' + (type === 'ai' ? 'inline-block' : 'none') + ';">' + provOpts + '</select>'
           + '<select class="ca-ext" style="width:100%;display:' + (type === 'extension' ? 'inline-block' : 'none') + ';">' + extOpts + '</select>'
           + '</span>'
-          + '<label style="font-size:0.85em;color:#ccc;white-space:nowrap;"><input type="checkbox" class="ca-pin"' + (a && a.require_pin ? ' checked' : '') + '> 🔒 PIN</label>'
-          + (legacy ? '<span style="font-size:0.78em;color:#e6a;white-space:nowrap;">(from Home Assistant config)</span>' : '')
+          + '<label class="ca-pincell" style="font-size:0.85em;color:#ccc;"><input type="checkbox" class="ca-pin"' + (a && a.require_pin ? ' checked' : '') + '> 🔒 PIN</label>'
           + '</div>';
       });
       body.innerHTML = html;
@@ -8180,7 +8209,7 @@ def dashboard():
           <button class="reply-btn" onclick="showConfigTab('cmd')">commands_config.json</button>
           <button class="reply-btn" onclick="showConfigTab('motd')">motd.json</button>
         </div>
-        <div id="cfgTab" style="display:block; max-height:55vh; overflow-y:auto; padding-right:6px;">
+        <div id="cfgTab" style="display:block; overflow-y:auto; padding-right:6px;">
           <style>
             .cfg-section { border:1px solid #333; border-radius:8px; margin-bottom:10px; overflow:hidden; }
             .cfg-section-hdr { background:#1a1a1a; padding:8px 12px; cursor:pointer; display:flex; align-items:center; gap:8px; font-weight:bold; color:var(--theme-color); user-select:none; }
@@ -8198,6 +8227,16 @@ def dashboard():
             .cfg-field input:focus, .cfg-field select:focus, .cfg-field textarea:focus { border-color:var(--theme-color); outline:none; }
             .cfg-field .cfg-check { display:flex; align-items:center; gap:8px; flex-direction:row; }
             .cfg-field .cfg-check input { width:18px; height:18px; accent-color:var(--theme-color); }
+            /* Checkboxes get their own full-width row in each section (on/off switches first,
+               options last) instead of sharing grid cells with text inputs. */
+            .cfg-toggles { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:6px 28px; padding:2px 0; }
+            .cfg-toggles .cfg-field { flex:0 0 auto; }
+            /* Any checkbox still inside the grid lines up with its neighbour's input box. */
+            .cfg-section-body > .cfg-field:has(> .cfg-check) { align-self:end; padding-bottom:7px; }
+            /* One scroll area: the dialog is a column and only the form scrolls. */
+            #configModal .modal-content { display:flex; flex-direction:column; overflow:hidden; max-height:90vh; }
+            #configModal .modal-body { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; overflow:auto; }
+            #configModal #cfgTab { flex:1 1 auto; min-height:0; }
             .ai-provider-section { display:none; grid-column:1/-1; }
             .ai-provider-section .cfg-section-body { padding:8px 0 0 0; }
             @media (max-width:600px) { .cfg-section-body { grid-template-columns:1fr; } }
@@ -8213,15 +8252,13 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🔌 Connection</div>
             <div class="cfg-section-body">
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_wifi"><label for="cfg_use_wifi">Use Wi-Fi</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_bluetooth"><label for="cfg_use_bluetooth">Use Bluetooth</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_mesh_interface"><label for="cfg_use_mesh_interface">Use Mesh Interface</label></div></div></div>
               <div class="cfg-field"><label>Serial Port</label><input type="text" id="cfg_serial_port" placeholder="/dev/ttyUSB0"></div>
               <div class="cfg-field"><label>Serial Baud</label><input type="number" id="cfg_serial_baud" placeholder="460800"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_wifi"><label for="cfg_use_wifi">Use Wi-Fi</label></div></div>
               <div class="cfg-field"><label>Wi-Fi Host</label><input type="text" id="cfg_wifi_host" placeholder="192.168.x.x"></div>
               <div class="cfg-field"><label>Wi-Fi Port</label><input type="number" id="cfg_wifi_port" placeholder="4403"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_bluetooth"><label for="cfg_use_bluetooth">Use Bluetooth</label></div></div>
               <div class="cfg-field"><label>BLE Address</label><input type="text" id="cfg_ble_address" placeholder="BLE address"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_mesh_interface"><label for="cfg_use_mesh_interface">Use Mesh Interface</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_debug"><label for="cfg_debug">Debug Mode</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_debug"><label for="cfg_debug">Debug Mode</label></div></div></div>
             </div>
           </div>
 
@@ -8336,10 +8373,7 @@ def dashboard():
             <div class="cfg-section-body">
               <div class="cfg-field full"><label>System Prompt</label><textarea id="cfg_system_prompt" rows="3" style="resize:vertical;"></textarea></div>
               <div class="cfg-field"><label>AI Command Prefix</label><input type="text" id="cfg_ai_command" placeholder="e.g. /ai"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_reply_in_channels"><label for="cfg_reply_in_channels">Reply in Channels</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_reply_in_directs"><label for="cfg_reply_in_directs">Reply in Direct Messages</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_ai_respond_on_longfast"><label for="cfg_ai_respond_on_longfast">AI Respond on LongFast</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_respond_to_mqtt_messages"><label for="cfg_respond_to_mqtt_messages">Respond to MQTT Messages</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_reply_in_channels"><label for="cfg_reply_in_channels">Reply in Channels</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_reply_in_directs"><label for="cfg_reply_in_directs">Reply in Direct Messages</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_ai_respond_on_longfast"><label for="cfg_ai_respond_on_longfast">AI Respond on LongFast</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_respond_to_mqtt_messages"><label for="cfg_respond_to_mqtt_messages">Respond to MQTT Messages</label></div></div></div>
             </div>
           </div>
 
@@ -8386,7 +8420,7 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 📱 Twilio SMS Alerts</div>
             <div class="cfg-section-body">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_enable_twilio"><label for="cfg_enable_twilio">Enable Twilio</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_enable_twilio"><label for="cfg_enable_twilio">Enable Twilio</label></div></div></div>
               <div class="cfg-field"><label>Twilio SID</label><input type="password" id="cfg_twilio_sid"></div>
               <div class="cfg-field"><label>Auth Token</label><input type="password" id="cfg_twilio_auth_token"></div>
               <div class="cfg-field"><label>From Number</label><input type="text" id="cfg_twilio_from_number" placeholder="+14444444444"></div>
@@ -8406,7 +8440,7 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 📧 SMTP Email Alerts</div>
             <div class="cfg-section-body">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_enable_smtp"><label for="cfg_enable_smtp">Enable SMTP</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_enable_smtp"><label for="cfg_enable_smtp">Enable SMTP</label></div></div></div>
               <div class="cfg-field"><label>SMTP Host</label><input type="text" id="cfg_smtp_host"></div>
               <div class="cfg-field"><label>SMTP Port</label><input type="number" id="cfg_smtp_port" placeholder="465"></div>
               <div class="cfg-field"><label>SMTP User</label><input type="text" id="cfg_smtp_user"></div>
@@ -8419,7 +8453,7 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🛰️ Multi-Radio (v0.7.0)</div>
             <div class="cfg-section-body">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_meshtastic_enabled"><label for="cfg_meshtastic_enabled">Meshtastic Enabled</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_meshtastic_enabled"><label for="cfg_meshtastic_enabled">Meshtastic Enabled</label></div></div></div>
               <div class="cfg-field"><label>Default Send Network</label>
                 <select id="cfg_default_send_network">
                   <option value="auto">Auto (active radios)</option>
@@ -8436,7 +8470,7 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr collapsed" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🟣 MeshCore Radio (v0.7.0)</div>
             <div class="cfg-section-body hidden">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_enabled"><label for="cfg_mc_enabled">Enable MeshCore</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_enabled"><label for="cfg_mc_enabled">Enable MeshCore</label></div></div></div>
               <div class="cfg-field"><label>Connection Type</label>
                 <select id="cfg_mc_connection_type">
                   <option value="serial">Serial</option>
@@ -8451,9 +8485,8 @@ def dashboard():
               <div class="cfg-field"><label>BLE Address</label><input type="text" id="cfg_mc_ble_address" placeholder="address, node name, or blank = auto-scan"></div>
               <div class="cfg-field"><label>BLE Pairing PIN</label><input type="text" id="cfg_mc_ble_pin" placeholder="6-digit passkey (if the node requires one)"></div>
               <div class="cfg-field"><label>BLE Adapter</label><input type="text" id="cfg_mc_ble_adapter" placeholder="blank = default (e.g. hci1 for a USB BT5 dongle)"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_bridge_enabled"><label for="cfg_mc_bridge_enabled">Bridge Chat to Meshtastic</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_send_adverts"><label for="cfg_mc_send_adverts">Send Adverts (DM discovery)</label></div></div>
               <div class="cfg-field"><label>Advert Interval (sec)</label><input type="number" id="cfg_mc_advert_interval_sec" placeholder="1800"></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_bridge_enabled"><label for="cfg_mc_bridge_enabled">Bridge Chat to Meshtastic</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_send_adverts"><label for="cfg_mc_send_adverts">Send Adverts (DM discovery)</label></div></div></div>
             </div>
           </div>
 
@@ -8461,11 +8494,10 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr collapsed" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🔌 MCP Server (v0.7.0)</div>
             <div class="cfg-section-body hidden">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_enabled"><label for="cfg_mcp_enabled">Enable MCP Server</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_require_auth"><label for="cfg_mcp_require_auth">Require Auth (bearer token)</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_enabled"><label for="cfg_mcp_enabled">Enable MCP Server</label></div></div></div>
               <div class="cfg-field full"><label>Auth Token (blank = auto-generate)</label><input type="password" id="cfg_mcp_auth_token"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_allow_emergency"><label for="cfg_mcp_allow_emergency">Allow Emergency Tool</label></div></div>
               <div class="cfg-field"><label>Rate Limit (per min)</label><input type="number" id="cfg_mcp_rate_limit_per_min" placeholder="120"></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_require_auth"><label for="cfg_mcp_require_auth">Require Auth (bearer token)</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_allow_emergency"><label for="cfg_mcp_allow_emergency">Allow Emergency Tool</label></div></div></div>
             </div>
           </div>
 
@@ -8473,10 +8505,8 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr collapsed" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🔄 Firmware &amp; Updates (v0.7.0)</div>
             <div class="cfg-section-body hidden">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_auto_check"><label for="cfg_fw_auto_check">Auto-Check for Updates</label></div></div>
               <div class="cfg-field"><label>Check Interval (sec)</label><input type="number" id="cfg_fw_check_interval_sec" placeholder="86400"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_allow_flashing"><label for="cfg_fw_allow_flashing">Allow Flashing (ESP32)</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_auto_update"><label for="cfg_fw_auto_update">Auto-Update (unattended)</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_auto_check"><label for="cfg_fw_auto_check">Auto-Check for Updates</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_allow_flashing"><label for="cfg_fw_allow_flashing">Allow Flashing (ESP32)</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_auto_update"><label for="cfg_fw_auto_update">Auto-Update (unattended)</label></div></div></div>
             </div>
           </div>
         </div>
@@ -8515,15 +8545,15 @@ def dashboard():
           <button class="mark-read-btn" onclick="reloadExtensions()">Hot-Reload Extensions</button>
           <span style="color:#888; font-size:0.9em;">Enable/disable changes require a reload or restart.</span>
         </div>
-        <div style="margin-bottom:12px; border:1px solid var(--theme-color); border-radius:8px; overflow:hidden;">
-          <div style="background:#222; padding:8px 12px; border-bottom:1px solid var(--theme-color); display:flex; gap:20px; font-weight:bold; color:var(--theme-color); font-size:0.9em;">
-            <span style="width:14px;"></span>
-            <span style="min-width:180px;">Extension</span>
-            <span style="min-width:80px;">Status</span>
-            <span style="flex:1;">Commands</span>
-            <span>Actions</span>
+        <div style="margin-bottom:12px; border:1px solid var(--theme-color); border-radius:8px; max-height:40vh; overflow:auto;">
+          <div class="ext-grid ext-grid-head" style="background:#222; border-bottom:1px solid var(--theme-color); font-weight:bold; color:var(--theme-color); font-size:0.9em;">
+            <span class="ext-dot"></span>
+            <span class="ext-name">Extension</span>
+            <span class="ext-status">Status</span>
+            <span class="ext-cmds">Commands</span>
+            <span class="ext-actions">Actions</span>
           </div>
-          <div id="extensionsListBody" style="max-height:35vh; overflow:auto;"></div>
+          <div id="extensionsListBody"></div>
         </div>
         <div id="extConfigPanel" style="display:none; border:1px solid var(--theme-color); border-radius:8px; padding:12px; background:#0a0a0a;">
           <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
@@ -8574,14 +8604,14 @@ def dashboard():
             <button class="mark-read-btn" onclick="saveAiEndpoints()">Save Endpoints</button>
           </div>
         </div>
-        <div style="border:1px solid var(--theme-color); border-radius:8px; overflow:hidden;">
-          <div style="background:#222; padding:8px 12px; border-bottom:1px solid var(--theme-color); display:flex; gap:14px; font-weight:bold; color:var(--theme-color); font-size:0.9em;">
-            <span style="min-width:120px;">Channel</span>
-            <span style="min-width:120px;">Agent Type</span>
-            <span style="flex:1;">Provider / Extension</span>
-            <span>PIN</span>
+        <div style="border:1px solid var(--theme-color); border-radius:8px; max-height:50vh; overflow:auto;">
+          <div class="ca-grid ca-grid-head" style="background:#222; border-bottom:1px solid var(--theme-color); font-weight:bold; color:var(--theme-color); font-size:0.9em;">
+            <span class="ca-ch">Channel</span>
+            <span class="ca-typecell">Agent Type</span>
+            <span class="ca-provcell">Provider / Extension</span>
+            <span class="ca-pincell">PIN</span>
           </div>
-          <div id="channelAgentsBody" style="max-height:50vh; overflow:auto;"></div>
+          <div id="channelAgentsBody"></div>
         </div>
         <div style="margin-top:8px; color:#888; font-size:0.82em;">
           Channels marked <span style="color:#e6a;">(from Home Assistant config)</span> come from the legacy
