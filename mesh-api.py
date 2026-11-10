@@ -3184,6 +3184,19 @@ def dashboard():
     .channel-group-header .ch-toggle.collapsed { transform: rotate(-90deg); }
     .channel-group-body { padding: 6px 10px; }
     .channel-group-body.collapsed { display: none; }
+    /* Extensions Manager: header and rows share one grid so the columns line up. */
+    .ext-grid { display: grid; grid-template-columns: 14px minmax(150px, 1.2fr) 80px minmax(0, 2fr) 180px;
+      grid-template-areas: "dot name status cmds actions"; align-items: center; column-gap: 14px; padding: 8px 12px; }
+    .ext-grid .ext-dot { grid-area: dot; } .ext-grid .ext-name { grid-area: name; }
+    .ext-grid .ext-status { grid-area: status; } .ext-grid .ext-cmds { grid-area: cmds; overflow-wrap: anywhere; }
+    .ext-grid .ext-actions { grid-area: actions; display: flex; gap: 6px; justify-content: flex-end; }
+    .ext-grid .ext-actions .reply-btn { margin-left: 0; }
+    .ext-grid-head { position: sticky; top: 0; z-index: 1; }
+    @media (max-width: 640px) {
+      .ext-grid { grid-template-columns: 14px minmax(0, 1fr) 160px; row-gap: 4px;
+        grid-template-areas: "dot name actions" ". status status" ". cmds cmds"; }
+      .ext-grid-head { display: none; }
+    }
     .reply-btn { margin-left: 10px; padding: 4px 10px; font-size: 0.85em; background: var(--bg-input); color: var(--theme-color); border: 1px solid var(--theme-color); border-radius: 5px; cursor: pointer; transition: background 0.15s, color 0.15s; }
     .reply-btn:hover { background: var(--theme-color); color: #000; }
     .btn-send { background: #1b5e20; color: #fff; border-color: #388e3c; }
@@ -4828,34 +4841,37 @@ def dashboard():
         const info = extensionsData.available[slug];
         const isLoaded = slug in (extensionsData.loaded || {});
         const row = document.createElement('div');
-        row.className = 'ext-row';
-        row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:8px 10px; border-bottom:1px solid #333; flex-wrap:wrap;';
+        row.className = 'ext-row ext-grid';
+        row.style.cssText = 'border-bottom:1px solid #333;';
 
         const statusDot = document.createElement('span');
-        statusDot.style.cssText = 'width:12px; height:12px; border-radius:50%; display:inline-block; flex-shrink:0;';
+        statusDot.className = 'ext-dot';
+        statusDot.style.cssText = 'width:12px; height:12px; border-radius:50%; display:inline-block;';
         statusDot.style.background = isLoaded ? '#0f0' : (info.enabled ? '#ff0' : '#666');
         statusDot.title = isLoaded ? 'Active' : (info.enabled ? 'Enabled (not loaded)' : 'Disabled');
         row.appendChild(statusDot);
 
         const nameSpan = document.createElement('span');
-        nameSpan.style.cssText = 'font-weight:bold; color:var(--theme-color); min-width:120px;';
+        nameSpan.className = 'ext-name';
+        nameSpan.style.cssText = 'font-weight:bold; color:var(--theme-color);';
         nameSpan.textContent = info.name + ' v' + info.version;
         row.appendChild(nameSpan);
 
         const statusLabel = document.createElement('span');
-        statusLabel.style.cssText = 'font-size:0.85em; color:#aaa; min-width:80px;';
+        statusLabel.className = 'ext-status';
+        statusLabel.style.cssText = 'font-size:0.85em; color:#aaa;';
         statusLabel.textContent = isLoaded ? 'Active' : (info.enabled ? 'Enabled' : 'Disabled');
         row.appendChild(statusLabel);
 
-        if (info.commands && info.commands.length > 0) {
-          const cmds = document.createElement('span');
-          cmds.style.cssText = 'font-size:0.85em; color:#0ff;';
-          cmds.textContent = info.commands.join(', ');
-          row.appendChild(cmds);
-        }
+        // Always add the commands cell (empty when there are none) so the grid stays aligned.
+        const cmds = document.createElement('span');
+        cmds.className = 'ext-cmds';
+        cmds.style.cssText = 'font-size:0.85em; color:#0ff;';
+        cmds.textContent = (info.commands && info.commands.length > 0) ? info.commands.join(', ') : '';
+        row.appendChild(cmds);
 
         const btnGroup = document.createElement('span');
-        btnGroup.style.cssText = 'margin-left:auto; display:flex; gap:6px;';
+        btnGroup.className = 'ext-actions';
 
         const toggleBtn = document.createElement('button');
         toggleBtn.className = 'reply-btn';
@@ -8515,15 +8531,15 @@ def dashboard():
           <button class="mark-read-btn" onclick="reloadExtensions()">Hot-Reload Extensions</button>
           <span style="color:#888; font-size:0.9em;">Enable/disable changes require a reload or restart.</span>
         </div>
-        <div style="margin-bottom:12px; border:1px solid var(--theme-color); border-radius:8px; overflow:hidden;">
-          <div style="background:#222; padding:8px 12px; border-bottom:1px solid var(--theme-color); display:flex; gap:20px; font-weight:bold; color:var(--theme-color); font-size:0.9em;">
-            <span style="width:14px;"></span>
-            <span style="min-width:180px;">Extension</span>
-            <span style="min-width:80px;">Status</span>
-            <span style="flex:1;">Commands</span>
-            <span>Actions</span>
+        <div style="margin-bottom:12px; border:1px solid var(--theme-color); border-radius:8px; max-height:40vh; overflow:auto;">
+          <div class="ext-grid ext-grid-head" style="background:#222; border-bottom:1px solid var(--theme-color); font-weight:bold; color:var(--theme-color); font-size:0.9em;">
+            <span class="ext-dot"></span>
+            <span class="ext-name">Extension</span>
+            <span class="ext-status">Status</span>
+            <span class="ext-cmds">Commands</span>
+            <span class="ext-actions">Actions</span>
           </div>
-          <div id="extensionsListBody" style="max-height:35vh; overflow:auto;"></div>
+          <div id="extensionsListBody"></div>
         </div>
         <div id="extConfigPanel" style="display:none; border:1px solid var(--theme-color); border-radius:8px; padding:12px; background:#0a0a0a;">
           <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
