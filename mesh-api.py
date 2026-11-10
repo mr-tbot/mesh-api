@@ -8209,7 +8209,7 @@ def dashboard():
           <button class="reply-btn" onclick="showConfigTab('cmd')">commands_config.json</button>
           <button class="reply-btn" onclick="showConfigTab('motd')">motd.json</button>
         </div>
-        <div id="cfgTab" style="display:block; max-height:55vh; overflow-y:auto; padding-right:6px;">
+        <div id="cfgTab" style="display:block; overflow-y:auto; padding-right:6px;">
           <style>
             .cfg-section { border:1px solid #333; border-radius:8px; margin-bottom:10px; overflow:hidden; }
             .cfg-section-hdr { background:#1a1a1a; padding:8px 12px; cursor:pointer; display:flex; align-items:center; gap:8px; font-weight:bold; color:var(--theme-color); user-select:none; }
@@ -8227,6 +8227,16 @@ def dashboard():
             .cfg-field input:focus, .cfg-field select:focus, .cfg-field textarea:focus { border-color:var(--theme-color); outline:none; }
             .cfg-field .cfg-check { display:flex; align-items:center; gap:8px; flex-direction:row; }
             .cfg-field .cfg-check input { width:18px; height:18px; accent-color:var(--theme-color); }
+            /* Checkboxes get their own full-width row in each section (on/off switches first,
+               options last) instead of sharing grid cells with text inputs. */
+            .cfg-toggles { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:6px 28px; padding:2px 0; }
+            .cfg-toggles .cfg-field { flex:0 0 auto; }
+            /* Any checkbox still inside the grid lines up with its neighbour's input box. */
+            .cfg-section-body > .cfg-field:has(> .cfg-check) { align-self:end; padding-bottom:7px; }
+            /* One scroll area: the dialog is a column and only the form scrolls. */
+            #configModal .modal-content { display:flex; flex-direction:column; overflow:hidden; max-height:90vh; }
+            #configModal .modal-body { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; overflow:auto; }
+            #configModal #cfgTab { flex:1 1 auto; min-height:0; }
             .ai-provider-section { display:none; grid-column:1/-1; }
             .ai-provider-section .cfg-section-body { padding:8px 0 0 0; }
             @media (max-width:600px) { .cfg-section-body { grid-template-columns:1fr; } }
@@ -8242,15 +8252,13 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🔌 Connection</div>
             <div class="cfg-section-body">
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_wifi"><label for="cfg_use_wifi">Use Wi-Fi</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_bluetooth"><label for="cfg_use_bluetooth">Use Bluetooth</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_mesh_interface"><label for="cfg_use_mesh_interface">Use Mesh Interface</label></div></div></div>
               <div class="cfg-field"><label>Serial Port</label><input type="text" id="cfg_serial_port" placeholder="/dev/ttyUSB0"></div>
               <div class="cfg-field"><label>Serial Baud</label><input type="number" id="cfg_serial_baud" placeholder="460800"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_wifi"><label for="cfg_use_wifi">Use Wi-Fi</label></div></div>
               <div class="cfg-field"><label>Wi-Fi Host</label><input type="text" id="cfg_wifi_host" placeholder="192.168.x.x"></div>
               <div class="cfg-field"><label>Wi-Fi Port</label><input type="number" id="cfg_wifi_port" placeholder="4403"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_bluetooth"><label for="cfg_use_bluetooth">Use Bluetooth</label></div></div>
               <div class="cfg-field"><label>BLE Address</label><input type="text" id="cfg_ble_address" placeholder="BLE address"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_use_mesh_interface"><label for="cfg_use_mesh_interface">Use Mesh Interface</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_debug"><label for="cfg_debug">Debug Mode</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_debug"><label for="cfg_debug">Debug Mode</label></div></div></div>
             </div>
           </div>
 
@@ -8365,10 +8373,7 @@ def dashboard():
             <div class="cfg-section-body">
               <div class="cfg-field full"><label>System Prompt</label><textarea id="cfg_system_prompt" rows="3" style="resize:vertical;"></textarea></div>
               <div class="cfg-field"><label>AI Command Prefix</label><input type="text" id="cfg_ai_command" placeholder="e.g. /ai"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_reply_in_channels"><label for="cfg_reply_in_channels">Reply in Channels</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_reply_in_directs"><label for="cfg_reply_in_directs">Reply in Direct Messages</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_ai_respond_on_longfast"><label for="cfg_ai_respond_on_longfast">AI Respond on LongFast</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_respond_to_mqtt_messages"><label for="cfg_respond_to_mqtt_messages">Respond to MQTT Messages</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_reply_in_channels"><label for="cfg_reply_in_channels">Reply in Channels</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_reply_in_directs"><label for="cfg_reply_in_directs">Reply in Direct Messages</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_ai_respond_on_longfast"><label for="cfg_ai_respond_on_longfast">AI Respond on LongFast</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_respond_to_mqtt_messages"><label for="cfg_respond_to_mqtt_messages">Respond to MQTT Messages</label></div></div></div>
             </div>
           </div>
 
@@ -8415,7 +8420,7 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 📱 Twilio SMS Alerts</div>
             <div class="cfg-section-body">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_enable_twilio"><label for="cfg_enable_twilio">Enable Twilio</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_enable_twilio"><label for="cfg_enable_twilio">Enable Twilio</label></div></div></div>
               <div class="cfg-field"><label>Twilio SID</label><input type="password" id="cfg_twilio_sid"></div>
               <div class="cfg-field"><label>Auth Token</label><input type="password" id="cfg_twilio_auth_token"></div>
               <div class="cfg-field"><label>From Number</label><input type="text" id="cfg_twilio_from_number" placeholder="+14444444444"></div>
@@ -8435,7 +8440,7 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 📧 SMTP Email Alerts</div>
             <div class="cfg-section-body">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_enable_smtp"><label for="cfg_enable_smtp">Enable SMTP</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_enable_smtp"><label for="cfg_enable_smtp">Enable SMTP</label></div></div></div>
               <div class="cfg-field"><label>SMTP Host</label><input type="text" id="cfg_smtp_host"></div>
               <div class="cfg-field"><label>SMTP Port</label><input type="number" id="cfg_smtp_port" placeholder="465"></div>
               <div class="cfg-field"><label>SMTP User</label><input type="text" id="cfg_smtp_user"></div>
@@ -8448,7 +8453,7 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🛰️ Multi-Radio (v0.7.0)</div>
             <div class="cfg-section-body">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_meshtastic_enabled"><label for="cfg_meshtastic_enabled">Meshtastic Enabled</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_meshtastic_enabled"><label for="cfg_meshtastic_enabled">Meshtastic Enabled</label></div></div></div>
               <div class="cfg-field"><label>Default Send Network</label>
                 <select id="cfg_default_send_network">
                   <option value="auto">Auto (active radios)</option>
@@ -8465,7 +8470,7 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr collapsed" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🟣 MeshCore Radio (v0.7.0)</div>
             <div class="cfg-section-body hidden">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_enabled"><label for="cfg_mc_enabled">Enable MeshCore</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_enabled"><label for="cfg_mc_enabled">Enable MeshCore</label></div></div></div>
               <div class="cfg-field"><label>Connection Type</label>
                 <select id="cfg_mc_connection_type">
                   <option value="serial">Serial</option>
@@ -8480,9 +8485,8 @@ def dashboard():
               <div class="cfg-field"><label>BLE Address</label><input type="text" id="cfg_mc_ble_address" placeholder="address, node name, or blank = auto-scan"></div>
               <div class="cfg-field"><label>BLE Pairing PIN</label><input type="text" id="cfg_mc_ble_pin" placeholder="6-digit passkey (if the node requires one)"></div>
               <div class="cfg-field"><label>BLE Adapter</label><input type="text" id="cfg_mc_ble_adapter" placeholder="blank = default (e.g. hci1 for a USB BT5 dongle)"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_bridge_enabled"><label for="cfg_mc_bridge_enabled">Bridge Chat to Meshtastic</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_send_adverts"><label for="cfg_mc_send_adverts">Send Adverts (DM discovery)</label></div></div>
               <div class="cfg-field"><label>Advert Interval (sec)</label><input type="number" id="cfg_mc_advert_interval_sec" placeholder="1800"></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_bridge_enabled"><label for="cfg_mc_bridge_enabled">Bridge Chat to Meshtastic</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mc_send_adverts"><label for="cfg_mc_send_adverts">Send Adverts (DM discovery)</label></div></div></div>
             </div>
           </div>
 
@@ -8490,11 +8494,10 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr collapsed" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🔌 MCP Server (v0.7.0)</div>
             <div class="cfg-section-body hidden">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_enabled"><label for="cfg_mcp_enabled">Enable MCP Server</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_require_auth"><label for="cfg_mcp_require_auth">Require Auth (bearer token)</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_enabled"><label for="cfg_mcp_enabled">Enable MCP Server</label></div></div></div>
               <div class="cfg-field full"><label>Auth Token (blank = auto-generate)</label><input type="password" id="cfg_mcp_auth_token"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_allow_emergency"><label for="cfg_mcp_allow_emergency">Allow Emergency Tool</label></div></div>
               <div class="cfg-field"><label>Rate Limit (per min)</label><input type="number" id="cfg_mcp_rate_limit_per_min" placeholder="120"></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_require_auth"><label for="cfg_mcp_require_auth">Require Auth (bearer token)</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_mcp_allow_emergency"><label for="cfg_mcp_allow_emergency">Allow Emergency Tool</label></div></div></div>
             </div>
           </div>
 
@@ -8502,10 +8505,8 @@ def dashboard():
           <div class="cfg-section">
             <div class="cfg-section-hdr collapsed" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🔄 Firmware &amp; Updates (v0.7.0)</div>
             <div class="cfg-section-body hidden">
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_auto_check"><label for="cfg_fw_auto_check">Auto-Check for Updates</label></div></div>
               <div class="cfg-field"><label>Check Interval (sec)</label><input type="number" id="cfg_fw_check_interval_sec" placeholder="86400"></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_allow_flashing"><label for="cfg_fw_allow_flashing">Allow Flashing (ESP32)</label></div></div>
-              <div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_auto_update"><label for="cfg_fw_auto_update">Auto-Update (unattended)</label></div></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_auto_check"><label for="cfg_fw_auto_check">Auto-Check for Updates</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_allow_flashing"><label for="cfg_fw_allow_flashing">Allow Flashing (ESP32)</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_fw_auto_update"><label for="cfg_fw_auto_update">Auto-Update (unattended)</label></div></div></div>
             </div>
           </div>
         </div>
