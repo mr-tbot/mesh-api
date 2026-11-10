@@ -64,6 +64,19 @@
     "rate_limit_per_min": 120
   },
 
+  "_comment_webui": "WebUI access control. host: address the dashboard listens on (0.0.0.0 = all interfaces; 127.0.0.1 = this machine only). auth.enabled turns on an HTTP Basic login for every route except /mcp and the webhook paths in auth.exempt_paths; leave auth.password blank to auto-generate one on first start (printed to the log), or use a Werkzeug hash (pbkdf2:/scrypt:). auth.api_token, if set, is also accepted as 'Authorization: Bearer <token>' or 'X-API-Key' for scripts. redact_secrets masks API keys, tokens and passwords in config shown in the browser.",
+  "webui": {
+    "host": "0.0.0.0",
+    "auth": {
+      "enabled": false,
+      "username": "admin",
+      "password": "",
+      "api_token": "",
+      "exempt_paths": ["/mcp", "/twilio_webhook", "/discord_webhook", "/n8n/webhook", "/webhook/mesh", "/whatsapp/webhook"]
+    },
+    "redact_secrets": true
+  },
+
   "_comment_firmware_v070": "v0.7.0: firmware & software update manager. Detects the connected Meshtastic/MeshCore device, checks GitHub for newer Meshtastic firmware, MeshCore firmware, and MESH-API itself, and shows a WebUI notification. allow_flashing (default false) gates actual flashing; auto_update (default false) flashes ESP32 Meshtastic devices unattended when an update is found. nRF52/UF2 + MeshCore fall back to guided web-flasher instructions.",
   "firmware": {
     "auto_check": true,

@@ -17,6 +17,7 @@ from flask import Flask, request, jsonify, redirect, url_for, stream_with_contex
 import sys
 import socket  # for socket error checking
 import re
+import hmac
 import io
 import zipfile
 import subprocess
@@ -590,6 +591,143 @@ HELP_COMMAND = f"/help-{AI_SUFFIX}"
 MOTD_COMMAND = f"/motd-{AI_SUFFIX}"
 
 app = Flask(__name__)
+
+# -----------------------------
+# WebUI access control (optional)
+# -----------------------------
+# The dashboard and its JSON API can read and rewrite config.json (including API
+# keys), send to the mesh, restart the service and flash firmware. Out of the box it
+# listens on every interface with no login, so anyone who can reach port 5000 can do
+# all of that. The optional `webui` config block adds:
+#   - `host`: the address Flask binds to ("127.0.0.1" keeps it local to this machine)
+#   - `auth`: HTTP Basic login for every route, plus an optional API token for scripts
+#   - `redact_secrets`: mask API keys/tokens/passwords in config sent to the browser
+# Webhook routes called by outside services, and /mcp (which has its own bearer
+# token), are exempt from the login; add custom webhook paths to `exempt_paths`.
+WEBUI_CONFIG = config.get("webui", {}) or {}
+WEBUI_HOST = str(WEBUI_CONFIG.get("host") or "0.0.0.0").strip()
+_WEBUI_AUTH_CONFIG = WEBUI_CONFIG.get("auth", {}) or {}
+WEBUI_AUTH_ENABLED = bool(_WEBUI_AUTH_CONFIG.get("enabled", False))
+WEBUI_AUTH_USERNAME = str(_WEBUI_AUTH_CONFIG.get("username") or "admin")
+WEBUI_AUTH_PASSWORD = str(_WEBUI_AUTH_CONFIG.get("password") or "")
+WEBUI_API_TOKEN = str(_WEBUI_AUTH_CONFIG.get("api_token") or "")
+WEBUI_AUTH_EXEMPT_PATHS = [
+  str(p) for p in (_WEBUI_AUTH_CONFIG.get("exempt_paths") or [
+    "/mcp",
+    "/twilio_webhook",
+    "/discord_webhook",
+    "/n8n/webhook",
+    "/webhook/mesh",
+    "/whatsapp/webhook",
+  ]) if str(p).startswith("/")
+]
+WEBUI_REDACT_SECRETS = bool(WEBUI_CONFIG.get("redact_secrets", True))
+
+if WEBUI_AUTH_ENABLED and not WEBUI_AUTH_PASSWORD:
+  # Mirror the MCP token behaviour: generate a password once, save it, print it.
+  import secrets as _secrets
+  WEBUI_AUTH_PASSWORD = _secrets.token_urlsafe(18)
+  try:
+    _cfg_on_disk = safe_load_json(CONFIG_FILE, {})
+    _cfg_on_disk.setdefault("webui", {}).setdefault("auth", {})["password"] = WEBUI_AUTH_PASSWORD
+    _atomic_write_json(CONFIG_FILE, _cfg_on_disk)
+    print(f"🔐 WebUI login enabled with no password set; generated one and saved it to "
+          f"{CONFIG_FILE}. Username: {WEBUI_AUTH_USERNAME}  Password: {WEBUI_AUTH_PASSWORD}")
+  except Exception as e:
+    print(f"🔐 WebUI login enabled with no password set; generated one for this run "
+          f"(could not save it: {e}). Username: {WEBUI_AUTH_USERNAME}  Password: {WEBUI_AUTH_PASSWORD}")
+
+
+def _webui_password_ok(given: str) -> bool:
+  """Check a password against the configured one (plain text or a Werkzeug hash)."""
+  stored = WEBUI_AUTH_PASSWORD
+  if not stored or not given:
+    return False
+  if stored.startswith(("pbkdf2:", "scrypt:")):
+    try:
+      from werkzeug.security import check_password_hash
+      return check_password_hash(stored, given)
+    except Exception:
+      return False
+  return hmac.compare_digest(stored.encode("utf-8"), given.encode("utf-8"))
+
+
+def _webui_request_authorized() -> bool:
+  """True when the request carries valid Basic credentials or the API token."""
+  auth = request.authorization
+  if auth is not None and (getattr(auth, "type", "basic") or "basic").lower() == "basic":
+    user_ok = hmac.compare_digest((auth.username or "").encode("utf-8"),
+                                  WEBUI_AUTH_USERNAME.encode("utf-8"))
+    pass_ok = _webui_password_ok(auth.password or "")
+    if user_ok and pass_ok:
+      return True
+  if WEBUI_API_TOKEN:
+    token = request.headers.get("X-API-Key", "")
+    header = request.headers.get("Authorization", "")
+    if not token and header[:7].lower() == "bearer ":
+      token = header[7:].strip()
+    if token and hmac.compare_digest(token.encode("utf-8"), WEBUI_API_TOKEN.encode("utf-8")):
+      return True
+  return False
+
+
+def _webui_path_exempt(path: str) -> bool:
+  for p in WEBUI_AUTH_EXEMPT_PATHS:
+    base = p.rstrip("/") or "/"
+    if path == base or path.startswith(base + "/"):
+      return True
+  return False
+
+
+@app.before_request
+def _webui_require_auth():
+  if not WEBUI_AUTH_ENABLED or _webui_path_exempt(request.path or "/"):
+    return None
+  if _webui_request_authorized():
+    return None
+  return Response("Authentication required\n", 401,
+                  {"WWW-Authenticate": 'Basic realm="MESH-API", charset="UTF-8"'})
+
+
+# Config keys whose values are secrets. Matched on the key name's last part, so
+# `openai_api_key`, `bot_token`, `twilio_sid`, `secure_pin` and `webhook_url` all match
+# while `max_tokens` or `enable_pin` (a boolean) are left alone.
+_SECRET_KEY_RE = re.compile(r"(?:^|_)(?:api_key|key|token|secret|password|passwd|sid|pin|webhook_url)$",
+                            re.IGNORECASE)
+SECRET_MASK = "••••••••"
+
+
+def _is_secret_key(key) -> bool:
+  return isinstance(key, str) and bool(_SECRET_KEY_RE.search(key))
+
+
+def redact_secrets(obj):
+  """Return a copy of a config object with non-empty secret string values masked."""
+  if isinstance(obj, dict):
+    return {k: (SECRET_MASK if _is_secret_key(k) and isinstance(v, str) and v else redact_secrets(v))
+            for k, v in obj.items()}
+  if isinstance(obj, list):
+    return [redact_secrets(v) for v in obj]
+  return obj
+
+
+def restore_secrets(new, old):
+  """Put back secret values the browser sent as SECRET_MASK (i.e. left unchanged)."""
+  if isinstance(new, dict):
+    old_d = old if isinstance(old, dict) else {}
+    out = {}
+    for k, v in new.items():
+      if _is_secret_key(k) and v == SECRET_MASK:
+        out[k] = old_d.get(k, "")
+      else:
+        out[k] = restore_secrets(v, old_d.get(k))
+    return out
+  if isinstance(new, list):
+    old_l = old if isinstance(old, list) else []
+    return [restore_secrets(v, old_l[i] if i < len(old_l) else None) for i, v in enumerate(new)]
+  return new
+
+
 messages = []
 interface = None
 # v0.7.2.2: real-time mesh traffic monitor. Each event is (epoch_seconds, network,
@@ -669,6 +807,8 @@ def config_editor_load():
         motd = f.read()
     except FileNotFoundError:
       motd = ""
+    if WEBUI_REDACT_SECRETS:
+      cfg = redact_secrets(cfg)
     return jsonify({"config": cfg, "commands_config": cmds, "motd": motd})
   except Exception as e:
     return jsonify({"message": str(e)}), 500
@@ -687,6 +827,8 @@ def config_editor_save():
     # Drop any null values before persisting so a cleared numeric field in the
     # config form can never brick the next startup coercion (GitHub #60).
     cfg = _strip_null_config(cfg)
+    # Secrets the browser received masked come back as SECRET_MASK: keep the stored value.
+    cfg = restore_secrets(cfg, safe_load_json(CONFIG_FILE, {}))
     _atomic_write_json(CONFIG_FILE, cfg)
     _atomic_write_json(COMMANDS_CONFIG_FILE, cmds)
     _atomic_write_text(MOTD_FILE, motd)
@@ -746,6 +888,8 @@ def extensions_config_get(slug):
   try:
     with open(ext_path, "r", encoding="utf-8") as f:
       ext_config = json.load(f)
+    if WEBUI_REDACT_SECRETS:
+      ext_config = redact_secrets(ext_config)
     return jsonify(ext_config)
   except Exception as e:
     return jsonify({"message": str(e)}), 500
@@ -767,6 +911,7 @@ def extensions_config_save(slug):
     # brick an extension whose accessor does int(config.get(...)) — the same
     # class of bug as GitHub #60 in the main config editor.
     data = _strip_null_config(data)
+    data = restore_secrets(data, safe_load_json(ext_path, {}))
     _atomic_write_json(ext_path, data)
     add_script_log(f"[WebUI] Extension '{slug}' config saved.")
     return jsonify({"status": "ok"})
@@ -9367,10 +9512,17 @@ def main():
             print(f"⚠️ Firmware updater failed to initialise: {e}")
             firmware_updater = None
 
-    print("Launching Flask in the background on port 5000...")
+    print(f"Launching Flask in the background on {WEBUI_HOST}:5000...")
+    if WEBUI_AUTH_ENABLED:
+        print(f"🔐 WebUI login required (user '{WEBUI_AUTH_USERNAME}'"
+              + ("; API token accepted" if WEBUI_API_TOKEN else "") + ").")
+    elif WEBUI_HOST not in ("127.0.0.1", "localhost", "::1"):
+        print("⚠️  WebUI has NO login and listens on " + WEBUI_HOST + ":5000. Anyone who can reach it "
+              "can read your API keys, change config, send to the mesh and restart MESH-API. "
+              "Set webui.auth.enabled (or webui.host to 127.0.0.1) in config.json.")
     api_thread = threading.Thread(
         target=app.run,
-        kwargs={"host": "0.0.0.0", "port": 5000, "debug": False},
+        kwargs={"host": WEBUI_HOST, "port": 5000, "debug": False},
         daemon=True
     )
     api_thread.start()

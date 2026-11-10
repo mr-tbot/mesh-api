@@ -167,6 +167,7 @@ these top-level blocks (all configurable from the **⚙️ Config** editor and t
 - `default_send_network` — `auto` (whichever radios are connected) / `meshtastic` / `meshcore` / `both`.
 - `meshcore` — the MeshCore radio (connection type `serial`/`tcp`/`ble`, port/host/address, adverts, channel bridging).
   - **BLE keys:** `ble_address` (blank = scan for a `MeshCore-*` device) and `ble_pin` (the 6-digit pairing passkey, if your node requires one). On Linux, MESH-API auto-registers a BlueZ pairing agent (via `bt-agent` from the `bluez-tools` package) that supplies `ble_pin` during pairing — install `bluez-tools` (`sudo apt install bluez-tools`) for automatic BLE pairing, and make sure the Bluetooth adapter is powered/unblocked. If the link keeps dropping right after connecting, it's usually **weak signal** — the connection banner shows the node's RSSI. Both keys are editable in the **⚙️ Config** editor and the **Setup Wizard**.
+- `webui` — dashboard access control: `host` (bind address), `auth` (optional login and API token), `redact_secrets`. See **WebUI access control** below.
 - `mcp` — the [MCP server](README.md#mcp-server-model-context-protocol) (disabled by default, bearer-token auth).
 - `firmware` — firmware/software update-checker settings.
 
@@ -199,7 +200,45 @@ See the [CHANGELOG](CHANGELOG.md) entry for **v0.7.0 Beta** for details on each 
 
 - **Security:**
   - If using the Home Assistant extension with PIN protection, follow the specified format (`PIN=XXXX your message`) to ensure messages are accepted.
-  - If you expose the WebUI beyond localhost, protect access to the dashboard since configuration files may contain secrets (API keys, tokens).
+  - If you expose the WebUI beyond localhost, protect access to the dashboard since configuration files may contain secrets (API keys, tokens). Use the `webui` block (below).
+
+### WebUI access control
+
+The dashboard and its JSON API can read and rewrite `config.json`, send to the mesh,
+restart MESH-API and (if allowed) flash firmware. By default it listens on every network
+interface with **no login**, and MESH-API prints a warning at startup when that is the case.
+
+```jsonc
+"webui": {
+  "host": "0.0.0.0",            // 127.0.0.1 = reachable from this machine only
+  "auth": {
+    "enabled": true,            // HTTP Basic login for every route
+    "username": "admin",
+    "password": "",             // blank = generate one on first start, save it, print it to the log
+    "api_token": "",            // optional: also accept "Authorization: Bearer <token>" or "X-API-Key"
+    "exempt_paths": ["/mcp", "/twilio_webhook", "/discord_webhook",
+                     "/n8n/webhook", "/webhook/mesh", "/whatsapp/webhook"]
+  },
+  "redact_secrets": true        // mask API keys/tokens/passwords in config sent to the browser
+}
+```
+
+- **Login:** your browser asks for the username and password once and remembers them for
+  the session. `password` can be plain text or a Werkzeug hash, e.g.
+  `python -c "from werkzeug.security import generate_password_hash as g; print(g('your-password'))"`.
+- **Scripts and integrations** that call the HTTP API (for example `/send`) can use `api_token`
+  instead of the password.
+- **Exempt paths** skip the login because outside services call them: `/mcp` has its own bearer
+  token, and the webhook paths are called by Twilio, Discord, n8n, WhatsApp and the generic
+  webhook extension. If you changed an extension's webhook path, add it here. Each entry also
+  covers the paths below it.
+- **Secret redaction:** values of keys such as `*_api_key`, `*token`, `*_password`, `*_sid`,
+  `*_pin` and `*webhook_url` are sent to the browser as `••••••••`. Saving a form with the mask
+  unchanged keeps the stored value; clearing the field clears it. The **Backup** download still
+  contains the real values, so keep the login on if the dashboard is reachable by others.
+- Changes to the `webui` block take effect after a restart.
+- **Docker:** inside a container, leave `host` at `0.0.0.0` and limit exposure with the port
+  mapping instead, e.g. `"127.0.0.1:5000:5000"` in `docker-compose.yml`.
 
 - **Testing:**
   - You can test SMS sending with your suffixed `/sms-XY` command or trigger an emergency alert to confirm that Twilio and email integrations are functioning.
