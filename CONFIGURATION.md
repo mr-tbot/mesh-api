@@ -167,7 +167,7 @@ these top-level blocks (all configurable from the **⚙️ Config** editor and t
 - `default_send_network` — `auto` (whichever radios are connected) / `meshtastic` / `meshcore` / `both`.
 - `meshcore` — the MeshCore radio (connection type `serial`/`tcp`/`ble`, port/host/address, adverts, channel bridging).
   - **BLE keys:** `ble_address` (blank = scan for a `MeshCore-*` device) and `ble_pin` (the 6-digit pairing passkey, if your node requires one). On Linux, MESH-API auto-registers a BlueZ pairing agent (via `bt-agent` from the `bluez-tools` package) that supplies `ble_pin` during pairing — install `bluez-tools` (`sudo apt install bluez-tools`) for automatic BLE pairing, and make sure the Bluetooth adapter is powered/unblocked. If the link keeps dropping right after connecting, it's usually **weak signal** — the connection banner shows the node's RSSI. Both keys are editable in the **⚙️ Config** editor and the **Setup Wizard**.
-- `webui` — dashboard access control: `host` (bind address), `auth` (optional login and API token), `redact_secrets`. See **WebUI access control** below.
+- `webui` — dashboard and API access control: `host` (bind address), `auth` (optional login, API token, `protect_api`, `exempt_paths`), `redact_secrets`. See **WebUI access control** below.
 - `mcp` — the [MCP server](README.md#mcp-server-model-context-protocol) (disabled by default, bearer-token auth).
 - `firmware` — firmware/software update-checker settings.
 
@@ -204,18 +204,21 @@ See the [CHANGELOG](CHANGELOG.md) entry for **v0.7.0 Beta** for details on each 
 
 ### WebUI access control
 
-The dashboard and its JSON API can read and rewrite `config.json`, send to the mesh,
+The dashboard and its HTTP API can read and rewrite `config.json`, send to the mesh,
 restart MESH-API and (if allowed) flash firmware. By default it listens on every network
 interface with **no login**, and MESH-API prints a warning at startup when that is the case.
+
+You can set everything below in the dashboard: **⚙️ Config → 🔐 WebUI Access**.
 
 ```jsonc
 "webui": {
   "host": "0.0.0.0",            // 127.0.0.1 = reachable from this machine only
   "auth": {
-    "enabled": true,            // HTTP Basic login for every route
+    "enabled": true,            // turn the login on
     "username": "admin",
-    "password": "",             // blank = generate one on first start, save it, print it to the log
-    "api_token": "",            // optional: also accept "Authorization: Bearer <token>" or "X-API-Key"
+    "password": "",             // blank = generate one on the next start, save it here, print it to the log
+    "api_token": "",            // optional, for scripts: "Authorization: Bearer <token>" or "X-API-Key: <token>"
+    "protect_api": true,        // false = leave the API endpoints open, protect only the dashboard and admin endpoints
     "exempt_paths": ["/mcp", "/twilio_webhook", "/discord_webhook",
                      "/n8n/webhook", "/webhook/mesh", "/whatsapp/webhook"]
   },
@@ -223,22 +226,76 @@ interface with **no login**, and MESH-API prints a warning at startup when that 
 }
 ```
 
-- **Login:** your browser asks for the username and password once and remembers them for
-  the session. `password` can be plain text or a Werkzeug hash, e.g.
+#### What the login blocks
+
+**Turning the login on blocks the HTTP API as well as the dashboard.** Anything that calls
+MESH-API over HTTP (a script that posts to `/send`, a monitor that reads `/messages` or
+`/nodes`) stops working until you give it the API token, or until you set `protect_api` to `false`.
+
+| | Login off (default) | Login on, `protect_api: true` (default) | Login on, `protect_api: false` |
+|---|---|---|---|
+| Dashboard, config editor, extensions, logs, restart, firmware and every other route | open | login | login |
+| API endpoints: `/send`, `/messages`, `/nodes`, `/connection_status`, `/commands_info` | open | login or API token | **open** |
+| `exempt_paths`: `/mcp` and the webhooks | open | open | open |
+
+- **Scripts with the login on.** Set `api_token` and send it with each request:
+
+  ```bash
+  curl -H "Authorization: Bearer YOUR_TOKEN" -H "Content-Type: application/json" \
+       -d '{"message": "hello mesh", "channel_index": 1}' http://localhost:5000/send
+  curl -H "X-API-Key: YOUR_TOKEN" http://localhost:5000/messages
+  ```
+
+  The username and password work too (`curl -u admin:password ...`).
+- **`protect_api: false`** keeps MESH-API usable as an open API on a network you trust: the
+  five endpoints in the table answer without a login, while the dashboard, your config and
+  keys, the logs, restart and firmware stay behind it. Be aware of what that leaves open:
+  anyone who can reach the port can read mesh messages and transmit on the mesh.
+- **`exempt_paths` are never covered by the login**, because outside services call them and
+  cannot log in. Each entry also covers the paths below it. What protects them instead:
+  - `/mcp` has its own bearer token (`mcp.auth_token`).
+  - `/n8n/webhook` and `/webhook/mesh` check `receive_secret` when you set one in the extension.
+  - `/discord_webhook` only accepts messages while Discord receive is enabled.
+  - `/twilio_webhook` only answers while **Enable Twilio** is on. It does not verify that the
+    caller is Twilio, so if you do not use inbound SMS, remove it from the list.
+
+  Remove the entries you do not use. An empty list exempts nothing. If you change an
+  extension's webhook path, or add an extension with its own inbound route, add the path here.
+
+#### Passwords and logins
+
+- **Set your own password before you turn the login on.** If `password` is blank when the
+  login is enabled, MESH-API generates one at the next start, saves it to `config.json`
+  (`webui.auth.password`) and prints it once to the log
+  (`docker compose logs mesh-api | grep "WebUI login"`). The dashboard's log viewer is behind
+  the login by then, so read it from the host.
+- `password` can be plain text or a Werkzeug hash, e.g.
   `python -c "from werkzeug.security import generate_password_hash as g; print(g('your-password'))"`.
-- **Scripts and integrations** that call the HTTP API (for example `/send`) can use `api_token`
-  instead of the password.
-- **Exempt paths** skip the login because outside services call them: `/mcp` has its own bearer
-  token, and the webhook paths are called by Twilio, Discord, n8n, WhatsApp and the generic
-  webhook extension. If you changed an extension's webhook path, add it here. Each entry also
-  covers the paths below it.
-- **Secret redaction:** values of keys such as `*_api_key`, `*token`, `*_password`, `*_pass`, `*_sid`,
-  `*_pin` and `*webhook_url` are sent to the browser as `••••••••`. Saving a form with the mask
-  unchanged keeps the stored value; clearing the field clears it. The **Backup** download still
-  contains the real values, so keep the login on if the dashboard is reachable by others.
+- Your browser asks for the username and password once and remembers them for the session.
+- **Failed logins are limited:** after 10 wrong passwords or tokens from one address within
+  5 minutes, further attempts from that address are refused (HTTP 429) until the 5 minutes pass.
+- **Use HTTPS beyond a trusted network.** The login is HTTP Basic, which sends the password
+  with every request. On plain HTTP anyone on the path can read it. If the dashboard is
+  reachable from the internet, put it behind an HTTPS reverse proxy, a tunnel or a VPN.
+
+#### Secret redaction
+
+- Values of keys such as `*_api_key`, `*token`, `*_password`, `*_pass`, `*_sid`, `*_pin` and
+  `*webhook_url` are sent to the browser as `••••••••`. Saving a form with the mask unchanged
+  keeps the stored value; typing a new value replaces it; clearing the field clears it.
+- This is on by default, with or without the login.
+- If you rename a block in **Raw JSON** that contains a masked value (for example an entry
+  under `ai_endpoints`), re-enter its secret: the mask can only be matched to the old name.
+- The **Backup** download still contains the real values, so keep the login on if the
+  dashboard is reachable by others.
+
+#### Notes
+
 - Changes to the `webui` block take effect after a restart.
 - **Docker:** inside a container, leave `host` at `0.0.0.0` and limit exposure with the port
-  mapping instead, e.g. `"127.0.0.1:5000:5000"` in `docker-compose.yml`.
+  mapping instead, e.g. `"127.0.0.1:5000:5000"` in `docker-compose.yml`. A health check that
+  requests `/dashboard` with `curl -f` fails once the login is on (it gets a 401); drop the `-f`
+  or pass the credentials.
 
 - **Testing:**
   - You can test SMS sending with your suffixed `/sms-XY` command or trigger an emergency alert to confirm that Twilio and email integrations are functioning.

@@ -603,6 +603,8 @@ app = Flask(__name__)
 # all of that. The optional `webui` config block adds:
 #   - `host`: the address Flask binds to ("127.0.0.1" keeps it local to this machine)
 #   - `auth`: HTTP Basic login for every route, plus an optional API token for scripts
+#   - `auth.protect_api`: false leaves the integration endpoints (WEBUI_OPEN_API_PATHS)
+#     open, so the login covers the dashboard and admin endpoints only
 #   - `redact_secrets`: mask API keys/tokens/passwords in config sent to the browser
 # Webhook routes called by outside services, and /mcp (which has its own bearer
 # token), are exempt from the login; add custom webhook paths to `exempt_paths`.
@@ -613,16 +615,28 @@ WEBUI_AUTH_ENABLED = bool(_WEBUI_AUTH_CONFIG.get("enabled", False))
 WEBUI_AUTH_USERNAME = str(_WEBUI_AUTH_CONFIG.get("username") or "admin")
 WEBUI_AUTH_PASSWORD = str(_WEBUI_AUTH_CONFIG.get("password") or "")
 WEBUI_API_TOKEN = str(_WEBUI_AUTH_CONFIG.get("api_token") or "")
-WEBUI_AUTH_EXEMPT_PATHS = [
-  str(p) for p in (_WEBUI_AUTH_CONFIG.get("exempt_paths") or [
-    "/mcp",
-    "/twilio_webhook",
-    "/discord_webhook",
-    "/n8n/webhook",
-    "/webhook/mesh",
-    "/whatsapp/webhook",
-  ]) if str(p).startswith("/")
+WEBUI_DEFAULT_EXEMPT_PATHS = [
+  "/mcp",
+  "/twilio_webhook",
+  "/discord_webhook",
+  "/n8n/webhook",
+  "/webhook/mesh",
+  "/whatsapp/webhook",
 ]
+# A missing key means the defaults; an empty list means "exempt nothing".
+_webui_exempt = _WEBUI_AUTH_CONFIG.get("exempt_paths")
+if isinstance(_webui_exempt, str):
+  _webui_exempt = [p.strip() for p in _webui_exempt.split(",")]
+WEBUI_AUTH_EXEMPT_PATHS = [
+  str(p) for p in (WEBUI_DEFAULT_EXEMPT_PATHS if _webui_exempt is None else _webui_exempt)
+  if str(p).startswith("/")
+]
+# MESH-API is an API bridge: scripts and integrations call these endpoints. With
+# `protect_api` true (the default) they need the login or the API token like every
+# other route. With it false they stay open and the login covers the dashboard and
+# the admin endpoints (config, extensions, logs, restart, firmware) only.
+WEBUI_AUTH_PROTECT_API = bool(_WEBUI_AUTH_CONFIG.get("protect_api", True))
+WEBUI_OPEN_API_PATHS = ("/send", "/messages", "/nodes", "/connection_status", "/commands_info")
 WEBUI_REDACT_SECRETS = bool(WEBUI_CONFIG.get("redact_secrets", True))
 
 if WEBUI_AUTH_ENABLED and not WEBUI_AUTH_PASSWORD:
@@ -681,12 +695,51 @@ def _webui_path_exempt(path: str) -> bool:
   return False
 
 
+# Failed-login throttle: after WEBUI_FAIL_LIMIT wrong credentials from one address
+# within WEBUI_FAIL_WINDOW_SEC, further attempts from it are refused until the
+# window passes. Only requests that present credentials count, so the browser's
+# first, credential-less requests never trip it.
+# ponytail: per-address, in memory. Behind a reverse proxy every client shares the
+# proxy's address; key on a trusted forwarded header if that becomes a problem.
+WEBUI_FAIL_LIMIT = 10
+WEBUI_FAIL_WINDOW_SEC = 300
+_webui_failures = {}
+_webui_failures_lock = threading.Lock()
+
+
+def _webui_recent_failures(addr, note=False):
+  """Failed logins from *addr* inside the window; with note=True, record one more."""
+  now = time.time()
+  with _webui_failures_lock:
+    recent = [t for t in _webui_failures.get(addr, ()) if now - t < WEBUI_FAIL_WINDOW_SEC]
+    if note:
+      recent.append(now)
+    if recent:
+      _webui_failures[addr] = recent
+    else:
+      _webui_failures.pop(addr, None)
+    if len(_webui_failures) > 5000:  # never let a spray of addresses grow this without bound
+      _webui_failures.clear()
+    return len(recent)
+
+
 @app.before_request
 def _webui_require_auth():
-  if not WEBUI_AUTH_ENABLED or _webui_path_exempt(request.path or "/"):
+  path = request.path or "/"
+  if not WEBUI_AUTH_ENABLED or _webui_path_exempt(path):
     return None
+  if not WEBUI_AUTH_PROTECT_API and path in WEBUI_OPEN_API_PATHS:
+    return None
+  addr = request.remote_addr or "?"
+  presented = bool(request.headers.get("Authorization") or request.headers.get("X-API-Key"))
+  if presented and _webui_recent_failures(addr) >= WEBUI_FAIL_LIMIT:
+    return Response("Too many failed logins from this address. Try again in a few minutes.\n", 429,
+                    {"Retry-After": str(WEBUI_FAIL_WINDOW_SEC)})
   if _webui_request_authorized():
     return None
+  if presented and _webui_recent_failures(addr, note=True) == WEBUI_FAIL_LIMIT:
+    print(f"⚠️ WebUI: {WEBUI_FAIL_LIMIT} failed logins from {addr}; refusing further attempts "
+          f"from it for {WEBUI_FAIL_WINDOW_SEC // 60} minutes.")
   return Response("Authentication required\n", 401,
                   {"WWW-Authenticate": 'Basic realm="MESH-API", charset="UTF-8"'})
 
@@ -3189,6 +3242,12 @@ def discord_webhook():
 # -----------------------------
 @app.route("/twilio_webhook", methods=["POST"])
 def twilio_webhook():
+    # Inbound SMS is part of the Twilio integration. With Twilio switched off this
+    # route used to stay live on the default inbound channel, so anyone who could
+    # reach the port could broadcast text onto the mesh. It is also exempt from the
+    # WebUI login (Twilio cannot log in), so it must not answer unless it is in use.
+    if not ENABLE_TWILIO:
+        return "Twilio is not enabled", 403
     sms_body = request.form.get("Body")
     from_number = request.form.get("From")
     if not sms_body:
@@ -5807,6 +5866,7 @@ def dashboard():
       const sec = document.getElementById('ai_sec_' + p);
       if (sec) sec.style.display = 'block';
     }
+    const WEBUI_DEFAULT_EXEMPT_PATHS = """ + json.dumps(WEBUI_DEFAULT_EXEMPT_PATHS) + """;
     function populateConfigForm(cfg) {
       _loadedConfig = cfg;
       // Connection
@@ -5903,6 +5963,19 @@ def dashboard():
       setCfgVal('cfg_mcp_auth_token', mcp.auth_token);
       setCfgVal('cfg_mcp_allow_emergency', mcp.allow_emergency);
       setCfgVal('cfg_mcp_rate_limit_per_min', mcp.rate_limit_per_min);
+      // WebUI access control (v0.7.6.0)
+      const wu = cfg.webui || {};
+      const wa = wu.auth || {};
+      setCfgVal('cfg_webui_auth_enabled', wa.enabled);
+      setCfgVal('cfg_webui_auth_username', wa.username);
+      setCfgVal('cfg_webui_auth_password', wa.password);
+      setCfgVal('cfg_webui_auth_api_token', wa.api_token);
+      setCfgVal('cfg_webui_auth_protect_api', wa.protect_api !== false);
+      // No list saved yet = the built-in defaults; show them so saving keeps them.
+      setCfgVal('cfg_webui_auth_exempt_paths',
+        (Array.isArray(wa.exempt_paths) ? wa.exempt_paths : WEBUI_DEFAULT_EXEMPT_PATHS).join(', '));
+      setCfgVal('cfg_webui_host', wu.host);
+      setCfgVal('cfg_webui_redact_secrets', wu.redact_secrets !== false);
       // Firmware (v0.7.0)
       const fw = cfg.firmware || {};
       setCfgVal('cfg_fw_auto_check', fw.auto_check !== false);
@@ -5996,6 +6069,20 @@ def dashboard():
         auth_token: cfgVal('cfg_mcp_auth_token'),
         allow_emergency: cfgVal('cfg_mcp_allow_emergency'),
         rate_limit_per_min: cfgVal('cfg_mcp_rate_limit_per_min')
+      });
+      // WebUI access control (v0.7.6.0)
+      const _wu = (_loadedConfig && _loadedConfig.webui) || {};
+      cfg.webui = Object.assign({}, _wu, {
+        host: cfgVal('cfg_webui_host') || '0.0.0.0',
+        redact_secrets: cfgVal('cfg_webui_redact_secrets'),
+        auth: Object.assign({}, _wu.auth || {}, {
+          enabled: cfgVal('cfg_webui_auth_enabled'),
+          username: cfgVal('cfg_webui_auth_username') || 'admin',
+          password: cfgVal('cfg_webui_auth_password'),
+          api_token: cfgVal('cfg_webui_auth_api_token'),
+          protect_api: cfgVal('cfg_webui_auth_protect_api'),
+          exempt_paths: (cfgVal('cfg_webui_auth_exempt_paths') || '').split(',').map(p => p.trim()).filter(p => p)
+        })
       });
       // Firmware (v0.7.0)
       cfg.firmware = Object.assign({}, (_loadedConfig && _loadedConfig.firmware) || {}, {
@@ -8714,6 +8801,21 @@ def dashboard():
             </div>
           </div>
 
+          <!-- WebUI access control (v0.7.6.0) -->
+          <div class="cfg-section">
+            <div class="cfg-section-hdr collapsed" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🔐 WebUI Access</div>
+            <div class="cfg-section-body hidden">
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_webui_auth_enabled"><label for="cfg_webui_auth_enabled">Require Login</label></div></div><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_webui_auth_protect_api"><label for="cfg_webui_auth_protect_api">Login also covers API endpoints (/send, /messages, /nodes …)</label></div></div></div>
+              <div class="cfg-field"><label>Username</label><input type="text" id="cfg_webui_auth_username" placeholder="admin" autocomplete="off"></div>
+              <div class="cfg-field"><label>Password (blank = generate at next start)</label><input type="password" id="cfg_webui_auth_password" autocomplete="new-password"></div>
+              <div class="cfg-field full"><label>API Token for scripts (optional)</label><input type="password" id="cfg_webui_auth_api_token" autocomplete="off"></div>
+              <div class="cfg-field full"><label>Paths that skip the login (comma-separated; webhooks called by outside services)</label><input type="text" id="cfg_webui_auth_exempt_paths" placeholder="/mcp, /twilio_webhook, /discord_webhook"></div>
+              <div class="cfg-field"><label>Listen Address</label><input type="text" id="cfg_webui_host" placeholder="0.0.0.0 (all) or 127.0.0.1 (this machine)"></div>
+              <div class="cfg-toggles"><div class="cfg-field"><div class="cfg-check"><input type="checkbox" id="cfg_webui_redact_secrets"><label for="cfg_webui_redact_secrets">Hide keys, tokens and passwords in the browser</label></div></div></div>
+              <div style="grid-column:1/-1; color:#888; font-size:0.85em; line-height:1.45;">With <strong>Require Login</strong> on, the dashboard <em>and every HTTP API endpoint</em> ask for the username and password. Scripts send the API token instead (<code>Authorization: Bearer &lt;token&gt;</code>). Untick <strong>Login also covers API endpoints</strong> to leave <code>/send</code>, <code>/messages</code>, <code>/nodes</code>, <code>/connection_status</code> and <code>/commands_info</code> open for scripts; the dashboard, config, logs, restart and firmware stay behind the login. Paths in the skip list are never covered. A generated password is saved in <code>config.json</code> and printed once to the log, so set your own before you tick Require Login. Changes here apply after a restart.</div>
+            </div>
+          </div>
+
           <!-- Firmware Updates (v0.7.0) -->
           <div class="cfg-section">
             <div class="cfg-section-hdr collapsed" onclick="toggleCfgSection(this)"><span class="cfg-arrow">▼</span> 🔄 Firmware &amp; Updates (v0.7.0)</div>
@@ -9617,7 +9719,13 @@ def main():
     print(f"Launching Flask in the background on {WEBUI_HOST}:5000...")
     if WEBUI_AUTH_ENABLED:
         print(f"🔐 WebUI login required (user '{WEBUI_AUTH_USERNAME}'"
-              + ("; API token accepted" if WEBUI_API_TOKEN else "") + ").")
+              + ("; API token accepted" if WEBUI_API_TOKEN else "") + "). "
+              + ("It covers the dashboard and every HTTP API endpoint."
+                 if WEBUI_AUTH_PROTECT_API else
+                 "It covers the dashboard and admin endpoints; open without login: "
+                 + ", ".join(WEBUI_OPEN_API_PATHS) + ".")
+              + (" Never covered (exempt_paths): " + ", ".join(WEBUI_AUTH_EXEMPT_PATHS) + "."
+                 if WEBUI_AUTH_EXEMPT_PATHS else ""))
     elif WEBUI_HOST not in ("127.0.0.1", "localhost", "::1"):
         print("⚠️  WebUI has NO login and listens on " + WEBUI_HOST + ":5000. Anyone who can reach it "
               "can read your API keys, change config, send to the mesh and restart MESH-API. "

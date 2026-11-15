@@ -64,7 +64,7 @@
     "rate_limit_per_min": 120
   },
 
-  "_comment_webui": "WebUI access control. host: address the dashboard listens on (0.0.0.0 = all interfaces; 127.0.0.1 = this machine only). auth.enabled turns on an HTTP Basic login for every route except /mcp and the webhook paths in auth.exempt_paths; leave auth.password blank to auto-generate one on first start (printed to the log), or use a Werkzeug hash (pbkdf2:/scrypt:). auth.api_token, if set, is also accepted as 'Authorization: Bearer <token>' or 'X-API-Key' for scripts. redact_secrets masks API keys, tokens and passwords in config shown in the browser.",
+  "_comment_webui": "WebUI access control (edit under Config > WebUI Access). host: address the dashboard listens on (0.0.0.0 = all interfaces; 127.0.0.1 = this machine only). auth.enabled turns on an HTTP Basic login. It covers the dashboard AND every HTTP API endpoint (/send, /messages, /nodes ...), so scripts must then send auth.api_token as 'Authorization: Bearer <token>' or 'X-API-Key'. Set auth.protect_api to false to leave /send, /messages, /nodes, /connection_status and /commands_info open while the dashboard, config, logs, restart and firmware stay behind the login. auth.exempt_paths are never covered: /mcp (own bearer token) and the webhooks outside services call; an empty list exempts nothing. Leave auth.password blank to auto-generate one on the next start (saved here and printed once to the log), or use a Werkzeug hash (pbkdf2:/scrypt:). redact_secrets masks API keys, tokens and passwords in config shown in the browser. Restart to apply.",
   "webui": {
     "host": "0.0.0.0",
     "auth": {
@@ -72,6 +72,7 @@
       "username": "admin",
       "password": "",
       "api_token": "",
+      "protect_api": true,
       "exempt_paths": ["/mcp", "/twilio_webhook", "/discord_webhook", "/n8n/webhook", "/webhook/mesh", "/whatsapp/webhook"]
     },
     "redact_secrets": true

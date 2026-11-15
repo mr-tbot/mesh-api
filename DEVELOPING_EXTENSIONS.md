@@ -463,6 +463,12 @@ def register_routes(self, app) -> None:
 - Use unique route paths prefixed with your extension name
 - Import Flask utilities inside the route functions (avoid circular imports)
 - Keep route handlers lightweight
+- **WebUI login (v0.7.6.0+):** when a user turns on the optional login, it covers every route,
+  including yours. That is what you want for routes the dashboard or the user's own scripts call.
+  A route that an **outside service** calls (an inbound webhook) cannot log in, so document that
+  users must add its path to `webui.auth.exempt_paths` in the main `config.json`, and check the
+  caller yourself (a shared secret or a signature), because an exempt route is open to anyone
+  who can reach the port.
 
 ---
 

@@ -37,6 +37,13 @@ For details, link to existing docs rather than duplicating them:
   command is auto-exposed** as an `ext_cmd_*` tool, and extensions may add richer typed tools via
   optional `get_mcp_tools()` + `call_mcp_tool()` methods (duck-typed, no framework edit needed).
   Disabled by default; bearer-token auth + gated emergency tool. Config: `mcp` block.
+- **WebUI access control (v0.7.6.0+)**: optional `webui` config block. One `@app.before_request`
+  hook in [mesh-api.py](mesh-api.py) enforces an HTTP Basic login (or API token) on **every** route,
+  core and extension, except `webui.auth.exempt_paths` (inbound webhooks, `/mcp`) and, when
+  `webui.auth.protect_api` is false, the `WEBUI_OPEN_API_PATHS` integration endpoints. Config sent
+  to the browser has secrets masked (`redact_secrets`); every save path that takes config from the
+  browser must go through `restore_secrets()`. A new inbound webhook route needs its path in the
+  default exempt list and its own caller check. Off by default.
 - **Messaging**: event-driven receive via Meshtastic pubsub callbacks; extensions use background
   threads (`threading`) for polling. No `async`/`await` anywhere. Outbound messages > `chunk_size`
   (default 200 chars) are split at word boundaries with a delay between chunks.
