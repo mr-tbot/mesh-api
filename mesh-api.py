@@ -25,6 +25,8 @@ import tempfile
 import shutil
 import errno
 import collections
+import filecmp
+import inspect
 from twilio.rest import Client  # for Twilio SMS support
 from unidecode import unidecode   # Added unidecode import for Ollama text normalization
 from google.protobuf.message import DecodeError
@@ -1516,10 +1518,22 @@ def ai_endpoint_heartbeat_loop():
         time.sleep(max(15, AI_ENDPOINT_HEARTBEAT_SEC))
 
 
-def get_ai_response(prompt, provider=None, endpoint=None):
+def _ext_ai_response(ext, prompt, sender_id=None):
+    """Ask an extension AI provider, passing the sender only to providers that
+    take it. Older extension files (a bind-mounted extensions folder) and
+    third-party providers accept just the prompt."""
+    fn = ext.get_ai_response
+    if sender_id is not None and "sender_id" in inspect.signature(fn).parameters:
+        return fn(prompt, sender_id=sender_id)
+    return fn(prompt)
+
+
+def get_ai_response(prompt, provider=None, endpoint=None, sender_id=None):
     """Get an AI response. ``provider`` overrides the global AI_PROVIDER so a
     channel agent can pin a specific provider (e.g. hermes) per channel.
-    ``endpoint`` routes to a user-defined named AI endpoint instead (v0.7.3.1)."""
+    ``endpoint`` routes to a user-defined named AI endpoint instead (v0.7.3.1).
+    ``sender_id`` (the asking mesh node, when known) lets a stateful provider
+    such as Home Assistant keep one conversation per sender (#61)."""
     if endpoint:
         return send_to_named_endpoint(endpoint, prompt)
     prov = (provider or AI_PROVIDER or "").lower()
@@ -1550,7 +1564,7 @@ def get_ai_response(prompt, provider=None, endpoint=None):
         if extension_loader:
             ha_ext = extension_loader.get_ai_provider("home_assistant")
             if ha_ext:
-                return ha_ext.get_ai_response(prompt)
+                return _ext_ai_response(ha_ext, prompt, sender_id)
         return send_to_home_assistant(prompt)
     else:
         # Extension-supplied AI providers (e.g. the bundled Hermes extension)
@@ -1558,7 +1572,7 @@ def get_ai_response(prompt, provider=None, endpoint=None):
         if extension_loader:
             ext = extension_loader.get_ai_provider(prov)
             if ext:
-                return ext.get_ai_response(prompt)
+                return _ext_ai_response(ext, prompt, sender_id)
         print(f"⚠️ Unknown AI provider: {prov}")
         return None
 
@@ -1736,7 +1750,7 @@ def route_channel_agent(text, channel_idx, sender_id):
             return resp if resp else "🤖 [No response]"
         provider = spec.get("provider") or AI_PROVIDER
         info_print(f"[ChannelAgent] ch{channel_idx} → AI provider '{provider}'")
-        resp = get_ai_response(text, provider=provider)
+        resp = get_ai_response(text, provider=provider, sender_id=sender_id)
         return resp if resp else "🤖 [No response]"
 
     if agent == "extension":
@@ -1764,7 +1778,7 @@ def route_channel_agent(text, channel_idx, sender_id):
         # Next: extension acts as an AI provider (e.g. Home Assistant, OpenClaw).
         if hasattr(ext, "get_ai_response"):
             try:
-                resp = ext.get_ai_response(text)
+                resp = _ext_ai_response(ext, text, sender_id)
                 if resp:
                     return resp
             except Exception as e:
@@ -1808,7 +1822,7 @@ def handle_command(cmd, full_text, sender_id):
       if not pin_is_valid(user_prompt):
         return "Security code missing or invalid. Use 'PIN=XXXX'"
       user_prompt = strip_pin(user_prompt)
-    ai_answer = get_ai_response(user_prompt)
+    ai_answer = get_ai_response(user_prompt, sender_id=sender_id)
     return ai_answer if ai_answer else "🤖 [No AI response]"
   elif cmd == WHEREAMI_COMMAND:
     lat, lon, tstamp = get_node_location(sender_id)
@@ -1982,7 +1996,7 @@ def parse_incoming_text(text, sender_id, is_direct, channel_idx, network="meshta
     dprint("AI_RESPOND_ON_LONGFAST=False; not emitting AI reply on LongFast (ch 0).")
     return None
   if is_direct:
-    return get_ai_response(text)
+    return get_ai_response(text, sender_id=sender_id)
   if has_agent:
     return route_channel_agent(text, channel_idx, sender_id)
   return None
@@ -1995,6 +2009,59 @@ def parse_incoming_text(text, sender_id, is_direct, channel_idx, network="meshta
 # extension/plugin work identically regardless of which network a message came
 # from. This is the core of the multi-radio design and the fix for the issue
 # where MeshCore-originated messages never reached plugins like Telegram.
+
+def sync_bundled_extensions():
+    """Docker: bring the mounted extensions folder up to this image's code.
+
+    The documented docker-compose.yml bind-mounts ``./mesh-api/extensions`` over
+    ``/app/extensions`` (for config editing and custom extensions), which hid the
+    extension code shipped in the image: ``docker pull`` updated the core but the
+    extensions stayed at whatever version was first copied to the host, so
+    extension fixes never reached Docker installs (#59, #61).
+
+    The image keeps a pristine copy (``MESH_API_BUNDLED_EXTENSIONS``, set in the
+    Dockerfile). On startup every bundled file that differs is copied over the
+    mounted one. Never touched: an existing ``config.json`` (your settings) and
+    anything the image does not ship (custom extensions). Each replaced file is
+    first saved under ``extensions/_replaced/<version>/``. Opt out with
+    ``MESH_API_SYNC_EXTENSIONS=0``. Outside Docker the variable is unset and
+    this does nothing.
+    """
+    src = os.environ.get("MESH_API_BUNDLED_EXTENSIONS", "")
+    dst = os.path.abspath(EXTENSIONS_PATH)
+    if not src or not os.path.isdir(src) or os.path.abspath(src) == dst:
+        return
+    if os.environ.get("MESH_API_SYNC_EXTENSIONS", "1").strip().lower() in ("0", "false", "no", "off"):
+        print("Extension sync is disabled (MESH_API_SYNC_EXTENSIONS=0); using the mounted extension code as-is.")
+        return
+    backup_root = os.path.join(dst, "_replaced", MESH_API_VERSION)
+    added = updated = 0
+    try:
+        for root, dirs, files in os.walk(src):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            rel_dir = os.path.relpath(root, src)
+            for fname in files:
+                if fname.endswith((".pyc", ".pyo")):
+                    continue
+                rel = os.path.normpath(os.path.join(rel_dir, fname))
+                s_file, d_file = os.path.join(src, rel), os.path.join(dst, rel)
+                if os.path.exists(d_file):
+                    if fname == "config.json" or filecmp.cmp(s_file, d_file, shallow=False):
+                        continue
+                    os.makedirs(os.path.dirname(os.path.join(backup_root, rel)), exist_ok=True)
+                    shutil.copyfile(d_file, os.path.join(backup_root, rel))
+                    updated += 1
+                else:
+                    os.makedirs(os.path.dirname(d_file), exist_ok=True)
+                    added += 1
+                shutil.copyfile(s_file, d_file)
+    except Exception as e:
+        print(f"⚠️ Extension sync stopped early: {e}")
+    if added or updated:
+        # print() is already routed to the script log (StreamToLogger).
+        print(f"Extensions synced to v{MESH_API_VERSION}: {updated} file(s) updated, {added} added"
+              + (f" (previous copies saved in {backup_root})." if updated else "."))
+
 
 def notify_extensions_inbound(network, sender_id, sender_name, text, is_direct, channel_idx, via_mqtt=False):
     """Broadcast an inbound message to all extensions (plugins)."""
@@ -8319,6 +8386,7 @@ def dashboard():
                 <div class="cfg-field"><label>Channel Index</label><input type="number" id="cfg_home_assistant_channel_index" placeholder="-1 = off"></div>
                 <div class="cfg-field full"><label>Agent ID</label><input type="text" id="cfg_home_assistant_agent_id" placeholder="conversation.xxx (blank = HA default)"></div>
                 <div class="cfg-field"><label>Language</label><input type="text" id="cfg_home_assistant_language" placeholder="blank = HA default (e.g. en)"></div>
+                <div class="cfg-field full" style="color:#888; font-size:0.85em;">When the Home Assistant extension is enabled (🧩 Extensions), its own settings are the ones used. Agent ID and Language left blank there fall back to the values entered here.</div>
               </div></div>
               <!-- OpenAI Compatible -->
               <div id="ai_sec_openai_compatible" class="ai-provider-section"><div class="cfg-section-body">
@@ -9204,6 +9272,7 @@ def main():
             print(f"⚠️ MeshCore radio failed to initialise: {e}")
             meshcore_manager = None
     app_context = None
+    sync_bundled_extensions()
     try:
         from extensions.loader import ExtensionLoader
         app_context = {
@@ -9238,6 +9307,9 @@ def main():
             "resolve_send_networks": resolve_send_networks,
             "route_and_respond": route_and_respond,
             "notify_extensions_inbound": notify_extensions_inbound,
+            # v0.7.5.5: lets an extension that watches a channel on its own
+            # (Home Assistant) stand down when a Channel Agent owns that channel.
+            "get_channel_agent": get_channel_agent,
         }
         extension_loader = ExtensionLoader(EXTENSIONS_PATH, app_context)
         extension_loader.load_all()

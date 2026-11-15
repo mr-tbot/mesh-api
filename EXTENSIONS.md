@@ -862,21 +862,32 @@ Full-featured Bulletin Board System with SQLite store-and-forward messaging.
 
 ### Home Assistant
 
-Routes mesh messages to the Home Assistant Conversation API as an AI provider.
+Routes mesh messages to the Home Assistant Conversation API.
 
-This extension functions as an **AI provider** — when `ai_provider` is set to `"home_assistant"` in the main `config.json`, AI queries are routed through HA's conversation API.
+The extension works in two ways, and both can be active at once:
+
+- **Dedicated channel** — every plain-text (non-command) message on `channel_index` is sent to Home Assistant and the answer is broadcast back on that channel.
+- **AI provider** — when `ai_provider` is set to `"home_assistant"` in the main `config.json`, AI queries (`/ai`, direct messages, Channel Agents) are answered by Home Assistant.
 
 **Config (`extensions/home_assistant/config.json`):**
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `false` | Enable the extension |
-| `ha_url` | string | `""` | Home Assistant URL (e.g. `http://homeassistant.local:8123`) |
-| `ha_token` | string | `""` | Long-lived access token |
-| `ha_channel_index` | int | `-1` | Mesh channel for HA (-1 = DM only) |
-| `ha_pin` | string | `""` | Optional PIN to protect access |
-| `ha_language` | string | `"en"` | Conversation language |
+| `url` | string | `"http://homeassistant.local:8123/api/conversation/process"` | Full URL of Home Assistant's conversation endpoint |
+| `token` | string | `""` | Long-lived access token |
+| `timeout` | int | `90` | Seconds to wait for Home Assistant to answer |
+| `channel_index` | int | `1` | Mesh channel whose plain-text messages go to Home Assistant (`-1` = no dedicated channel) |
+| `enable_pin` | bool | `false` | Require `PIN=XXXX` in each message on the dedicated channel |
+| `secure_pin` | string | `"1234"` | The PIN to require when `enable_pin` is `true` |
+| `agent_id` | string | `""` | Conversation agent to use, e.g. `conversation.llama_cpp_model`. Blank = the core `home_assistant_agent_id` (the WebUI **Agent ID** field), then Home Assistant's default agent |
+| `language` | string | `""` | Conversation language, e.g. `en`. Blank = the core `home_assistant_language`, then Home Assistant's default |
 
-**Hooks:** AI provider via `get_ai_response()`.
+**Good to know:**
+- When this extension is enabled, **its settings are the ones used**. The Home Assistant fields in the WebUI's AI-provider section write the core `home_assistant_*` keys, which only apply when the extension is disabled — except **Agent ID** and **Language**, which the extension falls back to when its own are blank.
+- Follow-up messages continue the same Home Assistant conversation **per mesh sender**. One user's conversation is never continued by, or shown to, another user.
+- If a **Channel Agent** is assigned to the same channel as `channel_index`, the Channel Agent handles that channel and the extension's dedicated-channel mode stands down, so a request is never sent to Home Assistant twice.
+
+**Hooks:** `on_message()` (dedicated channel), AI provider via `get_ai_response()`.
 
 ---
 

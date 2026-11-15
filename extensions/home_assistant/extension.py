@@ -18,6 +18,8 @@ All configuration lives in this extension's own config.json.  Legacy
 keys in the main config.json are auto-migrated on first run.
 """
 
+import threading
+
 try:
     import requests
 except ImportError:
@@ -43,7 +45,7 @@ class HomeAssistantExtension(BaseExtension):
 
     @property
     def version(self) -> str:
-        return "1.0.0"
+        return "1.1.0"
 
     # ------------------------------------------------------------------
     # Config accessors
@@ -78,17 +80,29 @@ class HomeAssistantExtension(BaseExtension):
     def agent_id(self) -> str:
         """Optional HA conversation agent id (e.g. 'conversation.llama_cpp_model').
         When set, requests target this agent instead of HA's default (issue #61)."""
-        return str(self.config.get("agent_id", "") or "").strip()
+        return self._own_or_core("agent_id", "home_assistant_agent_id")
 
     @property
     def language(self) -> str:
-        return str(self.config.get("language", "") or "").strip()
+        return self._own_or_core("language", "home_assistant_language")
+
+    def _own_or_core(self, key: str, core_key: str) -> str:
+        """This extension's value, else the core config key of the same meaning.
+
+        The WebUI's AI-provider section writes the core ``home_assistant_*``
+        keys, but this extension answers whenever it is enabled, so a value
+        entered there was silently ignored (#61 follow-up)."""
+        core = (self.app_context or {}).get("config") or {}
+        return str(self.config.get(key) or core.get(core_key) or "").strip()
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def on_load(self) -> None:
+        # HA conversation_id per mesh sender, so one user's follow-up never
+        # continues (or reads the history of) another user's conversation.
+        self._conversation_ids = {}
         self.log(f"Home Assistant enabled. URL={'set' if self.ha_url else 'not set'}, "
                  f"Channel={self.channel_index}, PIN={'on' if self.enable_pin else 'off'}")
 
@@ -111,34 +125,55 @@ class HomeAssistantExtension(BaseExtension):
             return
         if message.strip().startswith("/"):
             return
+        # A core Channel Agent assigned to this channel already routes the
+        # message and replies. Answering here as well sent the request to HA
+        # twice (so "toggle the light" toggled it back) and replied twice.
+        get_channel_agent = self.app_context.get("get_channel_agent")
+        if get_channel_agent and get_channel_agent(ch_idx):
+            return
+        # HA may take up to `timeout` seconds. on_message runs on the radio's
+        # receive thread (for MeshCore, its asyncio loop), so answer off-thread.
+        threading.Thread(target=self._answer_channel_message,
+                         args=(message, metadata),
+                         daemon=True, name="ha-query").start()
 
-        # PIN validation
-        if self.enable_pin:
-            if not self._pin_is_valid(message):
-                resp = "Security code missing/invalid. Format: 'PIN=XXXX your msg'"
-                self._send_reply(resp, metadata)
-                return
-            message = self._strip_pin(message)
+    def _answer_channel_message(self, message: str, metadata: dict) -> None:
+        try:
+            if self.enable_pin:
+                if not self._pin_is_valid(message):
+                    resp = "Security code missing/invalid. Format: 'PIN=XXXX your msg'"
+                    self._send_reply(resp, metadata)
+                    return
+                message = self._strip_pin(message)
 
-        ha_response = self._query_home_assistant(message)
-        if ha_response:
-            self._send_reply(ha_response, metadata)
+            ha_response = self._query_home_assistant(message, metadata.get("sender_id"))
+            if ha_response:
+                self._send_reply(ha_response, metadata)
+        except Exception as exc:
+            self.log(f"⚠️ HA channel message error: {exc}")
 
     # ------------------------------------------------------------------
     # AI Provider interface
     # ------------------------------------------------------------------
 
-    def get_ai_response(self, prompt: str) -> str | None:
+    def get_ai_response(self, prompt: str, sender_id: str | None = None) -> str | None:
         """Called by ``get_ai_response()`` in core when
-        ``ai_provider == "home_assistant"``."""
-        return self._query_home_assistant(prompt)
+        ``ai_provider == "home_assistant"``. The core passes *sender_id* when it
+        knows who is asking, which keeps that sender's HA conversation going."""
+        return self._query_home_assistant(prompt, sender_id)
 
     # ------------------------------------------------------------------
     # Home Assistant API call
     # ------------------------------------------------------------------
 
-    def _query_home_assistant(self, user_message: str) -> str | None:
-        """Send a conversation request to Home Assistant."""
+    def _query_home_assistant(self, user_message: str,
+                              sender_id: str | None = None) -> str | None:
+        """Send a conversation request to Home Assistant.
+
+        *sender_id* keys the HA conversation, so follow-ups from the same mesh
+        node stay in one conversation. Without it the request is stateless: one
+        shared conversation_id leaked each user's history into the next
+        user's request."""
         if not self.ha_url:
             return None
         headers = {"Content-Type": "application/json"}
@@ -152,8 +187,8 @@ class HomeAssistantExtension(BaseExtension):
             payload["agent_id"] = self.agent_id
         if self.language:
             payload["language"] = self.language
-        if getattr(self, "_conversation_id", None):
-            payload["conversation_id"] = self._conversation_id
+        if sender_id and sender_id in self._conversation_ids:
+            payload["conversation_id"] = self._conversation_ids[sender_id]
 
         sanitize = self.app_context.get("sanitize_model_output")
         max_len = self.app_context.get("MAX_RESPONSE_LENGTH", 1000)
@@ -165,8 +200,8 @@ class HomeAssistantExtension(BaseExtension):
                 data = r.json()
                 # Keep the conversation_id for multi-turn continuity.
                 cid = data.get("conversation_id")
-                if cid:
-                    self._conversation_id = cid
+                if cid and sender_id:
+                    self._conversation_ids[sender_id] = cid
                 speech = data.get("response", {}).get("speech", {})
                 answer = speech.get("plain", {}).get("speech")
                 if answer:
