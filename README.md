@@ -1,4 +1,4 @@
-# MESH-API v0.7.5.5 Beta — Meshtastic + MeshCore Mesh Router & API / AI Bridge
+# MESH-API v0.7.6.0 Beta — Meshtastic + MeshCore Mesh Router & API / AI Bridge
 
 > ## 🎉 Now with full MeshCore support (since v0.7.0)
 >
@@ -338,7 +338,7 @@ You can run **one Meshtastic radio, one MeshCore radio, or one of each.** With b
 
 <img width="2543" height="1271" alt="image" src="https://github.com/user-attachments/assets/d2091bab-cbdf-4b4d-b424-10d59d812f22" />
 
-The latest v0.7.5.5 Beta Web-UI!  NEW MAPS FEATURES AND TONS OF NEW GOODIES!
+The latest v0.7.6.0 Beta Web-UI!  NEW MAPS FEATURES AND TONS OF NEW GOODIES!
 
 ---
 
@@ -737,7 +737,15 @@ The Config Editor includes a grouped help panel. These are the main groups and w
 
 ## Using the API
 
-The MESH-API server (running on Flask) exposes the following endpoints:
+The MESH-API server (running on Flask) exposes the following endpoints.
+
+> 🔐 **Login (v0.7.6.0+):** out of the box these endpoints need no login. If you turn on the
+> optional WebUI login (**⚙️ Config → 🔐 WebUI Access**), it covers the dashboard **and every
+> endpoint below**, so scripts must send the API token
+> (`Authorization: Bearer <token>` or `X-API-Key: <token>`). To keep `/send`, `/messages`,
+> `/nodes`, `/connection_status` and `/commands_info` open while the dashboard and config stay
+> behind the login, set `webui.auth.protect_api` to `false`. Details:
+> [WebUI access control](CONFIGURATION.md#webui-access-control).
 
 - **GET `/messages`**  
   Retrieve the last 100 messages in JSON format.
@@ -761,6 +769,10 @@ The MESH-API server (running on Flask) exposes the following endpoints:
   Send messages programmatically.
 - **POST `/discord_webhook`**  
   Receive messages from Discord (if configured).
+- **POST `/twilio_webhook`**  
+  Receive inbound SMS from Twilio. Only answers while **Enable Twilio** is on.
+
+Webhook endpoints and `/mcp` are never covered by the WebUI login, because the services that call them cannot log in.
 
 ---
 

@@ -34,7 +34,9 @@ services:
 
     restart: unless-stopped
     # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:5000/dashboard"]
+    #   # No -f: with the optional WebUI login on, /dashboard answers 401, which
+    #   # still proves the server is up.
+    #   test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://localhost:5000/dashboard"]
     #   interval: 30s
     #   retries: 3
     #   timeout: 5s
