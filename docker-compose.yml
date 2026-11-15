@@ -25,7 +25,11 @@ services:
       - ./mesh-api/logs/messages_archive.json:/app/messages_archive.json
       - ./mesh-api/logs/script.log:/app/script.log
 
-      # Mount extensions directory (enables custom extensions & config editing)
+      # Mount extensions directory (enables custom extensions & config editing).
+      # On startup the container updates the built-in extension code in this
+      # folder to match the image (your config.json files and custom extensions
+      # are left alone). To manage the code yourself, add under `environment:`
+      #   - MESH_API_SYNC_EXTENSIONS=0
       - ./mesh-api/extensions:/app/extensions
 
     restart: unless-stopped

@@ -1,4 +1,4 @@
-# MESH-API v0.7.5.4 Beta — Meshtastic + MeshCore Mesh Router & API / AI Bridge
+# MESH-API v0.7.5.5 Beta — Meshtastic + MeshCore Mesh Router & API / AI Bridge
 
 > ## 🎉 Now with full MeshCore support (since v0.7.0)
 >
@@ -247,11 +247,11 @@ Multi-arch Docker images are published for **linux/amd64** (x86_64) and **linux/
    - A Meshtastic device connected via USB serial, Wi-Fi, or Bluetooth.
 
 2. **Prepare the Volume Structure**
-   - The `docker-required-volumes/` folder in the repository contains a ready-to-use `mesh-api/` directory with default configs, all 30 built-in extensions, and empty log files. Copy it to your working directory:
+   - `docker-required-volumes.zip` in the repository contains a ready-to-use `mesh-api/` directory with default configs, all 30 built-in extensions, and empty log files. Unpack it into your working directory:
      ```bash
      git clone https://github.com/mr-tbot/mesh-api.git
      cd mesh-api
-     cp -r docker-required-volumes/mesh-api ./mesh-api
+     unzip docker-required-volumes.zip   # creates ./mesh-api/
      ```
    - Edit the config files inside `mesh-api/config/` before starting:
 
@@ -295,6 +295,8 @@ Multi-arch Docker images are published for **linux/amd64** (x86_64) and **linux/
 
 > **Tip:** To add custom extensions, drop the extension folder into `mesh-api/extensions/` on the host — it's volume-mounted into the container so no rebuild is needed. Restart the container with `docker compose restart` to pick up new extensions.
 
+> **Updating (v0.7.5.5+):** `docker compose pull && docker compose up -d` now updates the built-in extensions too. Because `mesh-api/extensions/` is mounted from the host, earlier images kept running whatever extension code was first copied there, so extension fixes never arrived with a new image. On startup the container now brings the built-in extension code in that folder up to the image's version. Your `config.json` files and any custom extensions are never touched, and every file it replaces is saved first under `mesh-api/extensions/_replaced/<version>/`. To manage extension code yourself, set `MESH_API_SYNC_EXTENSIONS=0` in the container's environment.
+
 ---
 
 
@@ -336,7 +338,7 @@ You can run **one Meshtastic radio, one MeshCore radio, or one of each.** With b
 
 <img width="2543" height="1271" alt="image" src="https://github.com/user-attachments/assets/d2091bab-cbdf-4b4d-b424-10d59d812f22" />
 
-The latest v0.7.5.4 Beta Web-UI!  NEW MAPS FEATURES AND TONS OF NEW GOODIES!
+The latest v0.7.5.5 Beta Web-UI!  NEW MAPS FEATURES AND TONS OF NEW GOODIES!
 
 ---
 

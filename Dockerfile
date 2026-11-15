@@ -30,6 +30,13 @@ COPY config.json .
 COPY commands_config.json .
 COPY motd.json .
 COPY extensions/ ./extensions/
+# Pristine copy of the extensions. docker-compose.yml bind-mounts the host's
+# ./mesh-api/extensions over /app/extensions, which hides the code copied above,
+# so on startup mesh-api.py syncs this copy into the mount. That is what lets
+# `docker pull` update extension code too. Existing config.json files and custom
+# extensions are never touched. Set MESH_API_SYNC_EXTENSIONS=0 to opt out.
+COPY extensions/ /opt/mesh-api/extensions/
+ENV MESH_API_BUNDLED_EXTENSIONS=/opt/mesh-api/extensions
 
 RUN pip install --no-cache-dir -r requirements.txt
 

@@ -8,7 +8,7 @@ name: Build and Push Docker Image
 #   DOCKERHUB_TOKEN     - a Docker Hub access token (Account Settings -> Security)
 #
 # Triggers:
-#   - Publishing a GitHub Release  -> tags :latest, :<release-tag>, :<major.minor>
+#   - Publishing a GitHub Release  -> tags :latest, :<release-tag>, :<major.minor.patch>, :<major.minor>
 #   - Manual "Run workflow"        -> tags :latest (and an optional custom tag)
 
 on:
@@ -52,6 +52,11 @@ jobs:
             type=ref,event=tag
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            # Release tags are four-part (v0.7.5.5-beta), which is not semver, so
+            # the two semver lines above produce nothing. Derive :0.7.5 and :0.7
+            # from the tag text instead.
+            type=match,pattern=v(\d+\.\d+\.\d+),group=1
+            type=match,pattern=v(\d+\.\d+),group=1
             type=raw,value=${{ github.event.inputs.custom_tag }},enable=${{ github.event.inputs.custom_tag != '' }}
 
       - name: Build and push
